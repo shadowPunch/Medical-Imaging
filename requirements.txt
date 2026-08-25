@@ -8,3 +8,5 @@ matplotlib>=3.7.0
 opencv-python>=4.8.0
 tqdm>=4.66.0
 pandas>=2.0.0
+torchxrayvision>=1.2.0
+albumentations>=1.4.0

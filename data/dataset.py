@@ -20,34 +20,44 @@ _TBX11K_LABEL_MAP: dict[str, int | None] = {
 # Per-source loaders — each returns a flat list of (image_path, label) pairs
 # ---------------------------------------------------------------------------
 
-def _cxr_image_dir(root: Path, size: int = 512) -> Path:
+def _cxr_image_dir(root: Path, size: int = 512, variant: str = "") -> Path:
     """
-    Returns the pre-resized image directory if it exists (created by preprocess.py),
-    otherwise falls back to the original high-resolution directory.
+    Returns the pre-resized image directory if it exists (created by preprocess.py
+    or, for variant="lungcrop", by lung_crop.py), otherwise falls back to the
+    original high-resolution directory — except for a non-default variant, where
+    a silent fallback would defeat the point (e.g. an ablation run quietly
+    training on uncropped images), so that raises instead.
     Run preprocess.py once to avoid the ~300 ms/image load cost during training.
     """
-    cached = root / f"images_{size}"
-    return cached if cached.exists() else root / "images" / "images"
+    suffix = f"_{variant}" if variant else ""
+    cached = root / f"images_{size}{suffix}"
+    if cached.exists():
+        return cached
+    if variant:
+        raise FileNotFoundError(
+            f"{cached} not found — run lung_crop.py to generate the '{variant}' variant first."
+        )
+    return root / "images" / "images"
 
 
-def load_shenzhen(root: Path, size: int = 512) -> list[tuple[Path, int]]:
+def load_shenzhen(root: Path, size: int = 512, variant: str = "") -> list[tuple[Path, int]]:
     """
     Shenzhen CXR: label encoded in filename suffix.
     CHNCXR_XXXX_0.png = normal, CHNCXR_XXXX_1.png = TB.
     """
     samples = []
-    for p in sorted(_cxr_image_dir(root, size).glob("*.png")):
+    for p in sorted(_cxr_image_dir(root, size, variant).glob("*.png")):
         label = int(p.stem.rsplit("_", 1)[-1])
         samples.append((p, label))
     return samples
 
 
-def load_montgomery(root: Path, size: int = 512) -> list[tuple[Path, int]]:
+def load_montgomery(root: Path, size: int = 512, variant: str = "") -> list[tuple[Path, int]]:
     """
     Montgomery CXR: same filename convention as Shenzhen.
     """
     samples = []
-    for p in sorted(_cxr_image_dir(root, size).glob("*.png")):
+    for p in sorted(_cxr_image_dir(root, size, variant).glob("*.png")):
         label = int(p.stem.rsplit("_", 1)[-1])
         samples.append((p, label))
     return samples
@@ -57,6 +67,7 @@ def load_tbx11k(
     root: Path,
     split: str = "train",
     latent_as_positive: bool = False,
+    variant: str = "",
 ) -> list[tuple[Path, int]]:
     """
     TBX11K Supervisely format: one JSON per image in {split}/ann/.
@@ -70,8 +81,12 @@ def load_tbx11k(
 
     Skips the test split silently — it has no labels.
     """
-    img_dir = root / split / "img"
+    img_dir = root / split / (f"img_{variant}" if variant else "img")
     ann_dir = root / split / "ann"
+    if variant and not img_dir.exists():
+        raise FileNotFoundError(
+            f"{img_dir} not found — run lung_crop.py to generate the '{variant}' variant first."
+        )
 
     label_map = dict(_TBX11K_LABEL_MAP)
     if latent_as_positive:
