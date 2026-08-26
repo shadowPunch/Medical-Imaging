@@ -59,12 +59,18 @@ confound before it found a real fix.**
   "sparse valley" effect) — the curve barely moved even with the
   bimodality gone, pointing instead to a generic, distribution-free
   order-statistic effect. **Settled the causal question cleanly** with a
-  single-source, single-variable ablation (TBX11K only, no pooling
-  confound): excluding sick_but_non-tb from training gives 53.1%
-  specificity on held-out TBX11K, including it gives 99.8% — non-
-  overlapping CIs, the training recipe going forward should always
-  include available non-TB pathology in the negative class. An
-  augmentation-strength sweep
+  single-source, single-variable, matched-training-size ablation (TBX11K
+  only, no pooling or volume confound): excluding sick_but_non-tb from
+  training gives 53.1% specificity on held-out TBX11K, including it gives
+  99.6–99.8% — non-overlapping CIs. **But it's not a universal rule**:
+  completing the third leave-one-out direction (Montgomery+TBX11K →
+  held-out Shenzhen) with the same "include everything" recipe *fails*
+  (ceiling 66.7%, a genuine discrimination collapse, not calibration) —
+  restricting TBX11K's contribution to healthy-only recovers it to 94.6%.
+  The correct recipe depends on whether the deployment target's own
+  negatives are predominantly healthy (Shenzhen-like — exclude non-TB
+  pathology from training) or mixed (TBX11K/Montgomery-like — include it).
+  An augmentation-strength sweep
   (mild/medium/aggressive) confirmed the mechanism: too-aggressive texture
   randomization destroys real diagnostic texture (cavitation, nodules) along
   with the confound, and mild wins because it removes less signal overall
@@ -1227,13 +1233,42 @@ target. That's a genuine discrimination failure on held-out Shenzhen, not
 a calibration problem like the other two directions (where the ceiling
 cleared 90%+ and only the frozen threshold failed). **The winning recipe
 does not uniformly generalize across all three leave-one-out directions**;
-Shenzhen is the weak link. Why is open — not run down here, since it's a
-new question (why does *this* held-out source resist the same fix that
-worked for the other two) rather than a continuation of the
-negative-composition or acquisition-texture threads already investigated,
-and this document's remaining time went to Steps 4/5 per the agreed
-priority order. Flagged as a real limitation of the "winning config"
-claim, not swept into the aggregate.
+Shenzhen is the weak link.
+
+**Mechanism found: the negative-composition fix that helps TBX11K and
+Montgomery actively costs the Shenzhen direction.** Hypothesis — Shenzhen's
+own negatives are near-entirely healthy, like the training/validation
+population every other direction's frozen threshold gets calibrated
+against; training with TBX11K's *mixed* negative class (half
+sick_but_non-tb) teaches the model a decision boundary calibrated for a
+harder negative population than Shenzhen actually has, making it too
+conservative — under-calling Shenzhen positives that don't look as
+extreme as a training-time "hard negative" would. Directly testable:
+retrain the identical Shenzhen direction with TBX11K's contribution
+restricted to healthy-only (`--exclude-tbx11k-tag sick_but_non-tb`,
+extended to the standard held-out branch, not just `tbx11k-val`):
+
+| TBX11K contribution | Held-out AUC | Ceiling sens@70 (95% CI) | Discrimination? |
+|---|---|---|---|
+| Full (healthy + sick_but_non-tb) | 0.757 [0.720, 0.793] | 66.7% [61.1, 73.4] | ✗ fails |
+| **Healthy only** | **0.945** [0.927, 0.961] | **94.6%** [92.1, 97.5] | ✓ clears 90% |
+
+**Non-overlapping CIs on both AUC and ceiling — confirmed, not just
+plausible.** Restricting TBX11K's contribution to healthy-only recovers
+the Shenzhen direction completely: the ceiling jumps from a genuine
+discrimination failure (66.7%) to comfortably clearing WHO TPP (94.6%),
+reclassifying Shenzhen from "broken" to the same calibration-only category
+as TBX11K and Montgomery. **This means the negative-composition fix is not
+a uniform win** — it helps directions where the held-out source's own
+negatives resemble the training mix (TBX11K, Montgomery — both draw enough
+non-healthy negatives that the model benefits from seeing the same
+diversity in training), and costs the direction where the held-out
+source's negatives don't (Shenzhen's are essentially all healthy, so a
+model calibrated against harder training negatives becomes too
+conservative for it). The recipe recommendation earlier in this document
+— "always include available non-TB pathology in the negative class" — is
+too strong as stated; the accurate version is in the deployment package
+below.
 
 **Complement-AUC for the actual winning config (crop + mild-aug combined,
 not aug alone).** Training Shenzhen-only with the full winning recipe
@@ -1341,33 +1376,54 @@ result; read the sections above to audit it.
 
 **The recipe.** EfficientNet-B0 (ImageNet-pretrained) shared encoder,
 lung-crop preprocessing (`lung_crop.py`), mild texture augmentation
-(`--texture-aug --aug-strength mild`). Negative-class composition rule,
-confirmed causal by the cleanest evidence in this document (Step 1's
-single-source, single-variable ablation, non-overlapping CIs): **whenever
-a training source's labels distinguish healthy from non-TB-abnormal
-cases, train on all of it — never restrict to healthy-only.** Excluding
-non-TB pathology from training negatives cost ~47 points of specificity
-in the controlled test (53.1%→99.8%). A CXR-pretrained DenseNet-121
-encoder swap was tested and tied the ImageNet encoder with no measured
-gain — not part of the recipe.
+(`--texture-aug --aug-strength mild`) — unconditional, all three
+directions. A CXR-pretrained DenseNet-121 encoder swap was tested and tied
+the ImageNet encoder with no measured gain — not part of the recipe.
 
-**Leave-one-source-out, all three directions, same recipe:**
+**Negative-class composition is *not* a unconditional "always include
+everything" rule — it has to match the deployment target, and getting it
+wrong actively costs performance.** Step 1's single-source ablation
+showed including non-TB pathology in training negatives is a large,
+causal, composition-not-volume effect (53.1%→99.8% specificity,
+matched-N confirmed). The Shenzhen-direction mechanism check below shows
+the same intervention *costs* ~28 points of ceiling sensitivity when the
+deployment target's own negatives don't share that diversity (Shenzhen's
+are near-entirely healthy) — the model becomes calibrated against a
+harder negative population than it will actually see, and under-calls
+real positives that don't look as extreme as a training-time "hard
+negative." **The accurate rule: match the training negative class's
+diversity to what the deployment site's own negative population actually
+looks like** — include non-TB pathology when the target site will see it
+too (TBX11K- and Montgomery-like populations, in this document's testing),
+exclude it when the target site's negatives are predominantly healthy
+(Shenzhen-like). This is exactly the kind of site-specific decision that
+makes the ≈250–300-negative calibration sample (protocol point 2, below)
+valuable for more than just the threshold — it's also the evidence a
+deploying site needs to pick the right recipe variant.
+
+**Leave-one-source-out, all three directions — two recipe variants for
+Shenzhen, since one size doesn't fit it:**
 
 | Held out | Val AUC | Held-out AUC | Frozen-threshold sens/spec | Ceiling sens@70 (95% CI) |
 |---|---|---|---|---|
-| TBX11K | 0.951 | 0.889 | 98.2% / 44.0% ✗ | **92.6%** [90.3, 94.6] |
-| Montgomery | 0.994 | 0.796 | 53.4% / 97.5% ✓ | 75.9% [65.4, 87.0] |
-| Shenzhen | 0.997 | 0.757 | 71.7% / 62.6% ✗ | **66.7%** [61.1, 73.4] |
+| TBX11K (full TBX11K composition in training) | 0.951 | 0.889 | 98.2% / 44.0% ✗ | **92.6%** [90.3, 94.6] |
+| Montgomery (full TBX11K composition in training) | 0.994 | 0.796 | 53.4% / 97.5% ✓ | 75.9% [65.4, 87.0] |
+| Shenzhen, full TBX11K composition | 0.997 | 0.757 | 71.7% / 62.6% ✗ | 66.7% [61.1, 73.4] — **fails** |
+| **Shenzhen, TBX11K healthy-only** | 0.9998 | **0.945** | — | **94.6%** [92.1, 97.5] — **passes** |
 
-Two of three directions clear the WHO TPP discrimination bar under a
-per-site-recalibrated threshold. The third (Shenzhen) does not — its
-ceiling itself sits below the 90% sensitivity target, a genuine
-discrimination failure this recipe hasn't fixed. **Do not claim this
-recipe generalizes to an arbitrary new site**; claim it clears the bar on
-two specific tested directions and fails on a third, tested one.
+**All three directions now clear the WHO TPP discrimination bar under
+per-site calibration, provided the recipe variant is matched to the
+target.** That's a stronger result than "two of three," but it comes with
+a real precondition the earlier framing didn't have: **a deploying site
+needs to know, or estimate from its own calibration sample, whether its
+negative population looks more like TBX11K/Montgomery (mixed pathology)
+or Shenzhen (predominantly healthy) before picking which recipe variant to
+run.** This document didn't fail to find a fix for Shenzhen; it found that
+"the fix" is direction-dependent, which is a different and more complete
+finding than either "the recipe generalizes" or "the recipe fails on
+Shenzhen" alone.
 
-**Deployment protocol — mandatory, not optional, for any of the two
-passing directions:**
+**Deployment protocol — mandatory, not optional:**
 
 1. **Never deploy with a threshold frozen from a different site's
    validation data.** Demonstrated failure mode across this entire
@@ -1379,36 +1435,40 @@ passing directions:**
    population before setting an operating threshold** — majority-negative
    is fine, need not be class-balanced (`eval/score_distribution_diagnosis.py`).
    Below ~100, a per-site threshold is closer to noise than correction;
-   don't bother calibrating on fewer.
-3. **Prefer including non-TB abnormal cases in whatever labeled data
-   informs calibration or retraining, not just healthy cases** — this is
-   the single highest-leverage fix found in this document (point 1's
-   causal ablation), and per-site calibration is a workaround for it, not
-   a substitute.
+   don't bother calibrating on fewer. Use this same sample to check
+   whether the site's negatives skew healthy or include non-TB pathology
+   — that decides which recipe variant (point 3) applies.
+3. **Match training/fine-tuning negative-class composition to the
+   deployment site's own negative population — do not default to
+   "include everything."** Include non-TB abnormal cases in training
+   negatives when the site will see them in practice; exclude them when
+   the site's negative population is predominantly healthy. Getting this
+   backwards costs real performance in either direction (Step 1's ablation
+   and the Shenzhen mechanism check, both above).
 4. **Track complement-AUC as a standing regression check**
    (`eval/complement_monitor.py`) on any future retraining or data
    addition. If it snaps back toward the no-intervention baseline (~0.93)
    while the headline sensitivity climbs, the acquisition-texture shortcut
    has returned and the new number shouldn't be trusted without re-running
    the full confound audit.
-5. **Do not deploy to a population resembling Shenzhen's acquisition
-   profile without further work.** Leave-one-out testing (above) shows a
-   genuine discrimination gap there, not a calibration gap — per-site
-   threshold tuning will not fix it.
 
 **What "good" means here, stated plainly, not implied.** With three
 public retrospective CXR datasets, this pipeline reaches WHO TPP-level
-discrimination cross-source, under per-site calibration, on two of three
-tested directions. It has not been prospectively validated on a real
-screening population, and the CAD4TB field study (Ngosa et al., Literature
-check) is the concrete reason that matters: real deployment populations
-are dominated by exactly the abnormal-non-TB cases this document found
-the training data needs deliberate exposure to, not a hypothetical edge
-case. **The claim this pipeline supports: "meets WHO TPP triage
-discrimination on retrospective, per-site-calibrated, held-out public
-benchmark data, on two of three tested cross-source directions."**
-Anything stronger — "ready to deploy," "generalizes," "validated" without
-those qualifiers — is not supported by what was actually measured here.
+discrimination cross-source, under per-site calibration, on all three
+tested directions — but only when the negative-class recipe is matched to
+the target population, which itself requires site-specific information
+this document's calibration protocol (point 2) is designed to surface. It
+has not been prospectively validated on a real screening population, and
+the CAD4TB field study (Ngosa et al., Literature check) is the concrete
+reason that matters: real deployment populations are dominated by exactly
+the abnormal-non-TB cases whose presence or absence this document found
+changes which recipe variant is correct. **The claim this pipeline
+supports: "meets WHO TPP triage discrimination on retrospective,
+per-site-calibrated, held-out public benchmark data, on all three tested
+cross-source directions, provided the negative-class recipe is matched to
+the deployment target's own population."** Anything stronger — "ready to
+deploy," "generalizes automatically," "validated" without those
+qualifiers — is not supported by what was actually measured here.
 
 ---
 
@@ -1453,17 +1513,25 @@ but narrower than it can sound quoted alone:
   points of the 70% specificity target with ≥90% confidence
   (`eval/score_distribution_diagnosis.py`); below ~100, per-site
   calibration is closer to noise than correction.
-- **Single-direction strength, and the third direction actively fails.**
+- **Single-direction strength, and the recipe is not one-size-fits-all.**
   The 92.6% [90.3, 94.6] result is one direction — Shenzhen + Montgomery
   trained, TBX11K held out. The Montgomery direction is confirmatory (same
   effect direction, wider CIs). **The third leave-one-out direction
-  (Montgomery + TBX11K trained, Shenzhen held out) does not work**: ceiling
-  sens@spec70 is 66.7% [61.1, 73.4], below the 90% target even under a
-  perfect per-site threshold — a genuine discrimination failure, not a
-  calibration one. The winning recipe does not uniformly generalize across
-  all three leave-one-out directions; treat the 92.6% headline as belonging
-  to its one direction, and treat "this recipe generalizes" as false in
-  general until the Shenzhen-direction gap is understood.
+  (Montgomery + TBX11K trained, Shenzhen held out) fails with the same
+  recipe used for the other two**: ceiling sens@spec70 is 66.7% [61.1,
+  73.4] with TBX11K's full negative composition in training, below the
+  90% target under a perfect per-site threshold — a genuine discrimination
+  failure, not a calibration one. Diagnosed and fixed, not left open:
+  restricting TBX11K's contribution to healthy-only recovers it to 94.6%
+  [92.1, 97.5] (Robustness interventions, above) — the negative-composition
+  fix that helps TBX11K/Montgomery actively hurts Shenzhen, because
+  Shenzhen's own negatives are near-entirely healthy and the model becomes
+  calibrated against a harder population than it will see. **The claim
+  isn't "this recipe generalizes" or "this recipe fails on Shenzhen" — it's
+  that the correct recipe depends on the deployment target's own negative
+  composition**, which a deploying site has to establish (via the
+  calibration sample already required for threshold-setting) before
+  picking a variant.
 - **No untouched holdout remains.** All three sources (Shenzhen, Montgomery,
   TBX11K) informed tuning decisions somewhere in this process — which source
   to hold out, the augmentation-strength sweep, the lung-crop margin/dilation

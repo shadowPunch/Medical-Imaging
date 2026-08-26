@@ -154,6 +154,8 @@ def main() -> None:
     parser.add_argument("--held-out",   type=str, required=True,
                         choices=["shenzhen", "montgomery", "tbx11k", "tbx11k-val"])
     parser.add_argument("--lung-crop",  action="store_true")
+    parser.add_argument("--exclude-tbx11k-tag", type=str, nargs="+", default=None)
+    parser.add_argument("--tbx11k-neg-cap", type=int, default=None)
     parser.add_argument("--variant",    type=str, default=None)
     parser.add_argument("--backbone",   type=str, default="efficientnet_b0")
     parser.add_argument("--image-size", type=int, default=320)
