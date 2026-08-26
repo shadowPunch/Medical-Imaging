@@ -15,3 +15,5 @@ albumentations>=1.4.0
 diffdrr>=0.6.0
 pydicom>=2.4.0
 SimpleITK>=2.3.0
+scikit-image>=0.22.0
+lpips>=0.1.4

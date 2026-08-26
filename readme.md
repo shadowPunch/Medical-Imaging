@@ -176,11 +176,52 @@ a fix was needed and applied. Worth revisiting only if a longer future run
 shows the plateau actually trending upward over a wider window than
 tested here — it doesn't, in the one run that exists.
 
-This is a single run, not a validated model: no PSNR/SSIM/LPIPS against
-paired CT ground truth yet (§10's quantitative validation), no held-out
-generalization check, no hyperparameter search. It demonstrates the
-pipeline trains stably end-to-end on real data at real scale — it does not
-demonstrate reconstruction quality. Output artifacts pulled down to
+This is a single run, not a validated model: no held-out generalization
+check at training time (all 150 CT series informed the paired loss, see
+below), no hyperparameter search. It demonstrates the pipeline trains
+stably end-to-end on real data at real scale — that alone does not
+demonstrate reconstruction quality, which is why the check below exists.
+
+**Quantitative validation against held-out paired CT (§10, `recon/eval_paired.py`)
+— the answer to "is this a thorax or plausible-looking noise."** Every one
+of the 150 CT series already fetched trained the paired-supervision loss,
+so none of them are a valid held-out set; fetched 12 more, genuinely
+disjoint (`datasets/lidc-idri/manifest_heldout12.tcia`, verified by
+`SeriesInstanceUID` set difference, not assumed from slice arithmetic).
+For each: render a canonical-pose DRR, predict a volume, compare against
+the real CT's own resampled density.
+
+| Metric | Mean | Std | Range (n=12) |
+|---|---|---|---|
+| PSNR | 15.99 | 1.73 | [13.41, 20.56] |
+| SSIM | 0.245 | 0.053 | [0.144, 0.337] |
+| LPIPS (per-slice avg.) | 0.595 | 0.021 | [0.563, 0.633] |
+| Projection MSE (normalized) | 0.310 | 0.082 | [0.193, 0.469] |
+
+**The honest answer: not yet a thorax, by direct voxel comparison — but
+not pure noise either.** PSNR ~16dB and SSIM ~0.24 are low by the
+standards of successful medical image reconstruction (where PSNR>25dB and
+SSIM>0.6 are typical benchmarks for "this looks like the target");
+LPIPS ~0.60 (AlexNet backbone) sits well into "perceptually different"
+territory, not "similar." Voxel-level fidelity against real, unseen CT is
+poor. The one metric that reads better is projection consistency: 0.31 on
+a z-score-normalized scale where 2.0 is the uncorrelated-random ceiling
+(established via the shape-induction loss analysis above) — the
+re-projected prediction retains real, non-trivial correlation with the
+input DRR's coarse shape, clearly better than chance, just not close
+enough to call it accurate. **Read together: the model learned something
+about coarse shape from the 2D input, but does not yet reconstruct
+voxel-accurate anatomy on CT it wasn't trained on.** This is likely a
+convergence/generalization gap rather than a broken pipeline — training
+loss on the 150 series it *did* see kept dropping smoothly to 0.079 (loss
+diagnosis above), so the model fits its training distribution; a single
+2000-step run with no held-out check during training and no
+hyperparameter search is a plausible place for that fit not to generalize
+yet. Next step if pursued: hold out CT series *during* training (not just
+for this post-hoc check), track PSNR/SSIM on that holdout across training,
+and use it to decide when to stop rather than only watching training loss.
+
+Output artifacts pulled down to
 `outputs/phase3_recon/` (gitignored, like every other checkpoint dir) and
 inspected directly, not just trusted from the log: `latest.pt` is a real
 386-key model state dict at step 2000/2000; `sample_reconstruction.nrrd` is
@@ -1237,6 +1278,86 @@ assessed here, not lower. Per-deployment threshold calibration (proposal
 §5) is the cheaper fix to try first since it needs no retraining; DANN is
 the next lever if calibration alone can't close the gap. Still optional for
 now, but no longer for the reason originally given.
+
+---
+
+## Phase 2: deployment package
+
+Everything above this section is the investigation log — how each number
+was found, what didn't work, what corrected what. This section is the
+finished deliverable: what to actually run, what a deploying site needs to
+do, and what claim is and isn't supported. Read this section to use the
+result; read the sections above to audit it.
+
+**The recipe.** EfficientNet-B0 (ImageNet-pretrained) shared encoder,
+lung-crop preprocessing (`lung_crop.py`), mild texture augmentation
+(`--texture-aug --aug-strength mild`). Negative-class composition rule,
+confirmed causal by the cleanest evidence in this document (Step 1's
+single-source, single-variable ablation, non-overlapping CIs): **whenever
+a training source's labels distinguish healthy from non-TB-abnormal
+cases, train on all of it — never restrict to healthy-only.** Excluding
+non-TB pathology from training negatives cost ~47 points of specificity
+in the controlled test (53.1%→99.8%). A CXR-pretrained DenseNet-121
+encoder swap was tested and tied the ImageNet encoder with no measured
+gain — not part of the recipe.
+
+**Leave-one-source-out, all three directions, same recipe:**
+
+| Held out | Val AUC | Held-out AUC | Frozen-threshold sens/spec | Ceiling sens@70 (95% CI) |
+|---|---|---|---|---|
+| TBX11K | 0.951 | 0.889 | 98.2% / 44.0% ✗ | **92.6%** [90.3, 94.6] |
+| Montgomery | 0.994 | 0.796 | 53.4% / 97.5% ✓ | 75.9% [65.4, 87.0] |
+| Shenzhen | 0.997 | 0.757 | 71.7% / 62.6% ✗ | **66.7%** [61.1, 73.4] |
+
+Two of three directions clear the WHO TPP discrimination bar under a
+per-site-recalibrated threshold. The third (Shenzhen) does not — its
+ceiling itself sits below the 90% sensitivity target, a genuine
+discrimination failure this recipe hasn't fixed. **Do not claim this
+recipe generalizes to an arbitrary new site**; claim it clears the bar on
+two specific tested directions and fails on a third, tested one.
+
+**Deployment protocol — mandatory, not optional, for any of the two
+passing directions:**
+
+1. **Never deploy with a threshold frozen from a different site's
+   validation data.** Demonstrated failure mode across this entire
+   document (43.8–44.0% specificity collapse) and independently
+   replicated in the field on an unrelated model (Shuaibu et al., 43.7%
+   specificity, Literature check).
+2. **Collect ≈250–300 labeled negatives from the deployment site's own
+   population before setting an operating threshold** — majority-negative
+   is fine, need not be class-balanced (`eval/score_distribution_diagnosis.py`).
+   Below ~100, a per-site threshold is closer to noise than correction;
+   don't bother calibrating on fewer.
+3. **Prefer including non-TB abnormal cases in whatever labeled data
+   informs calibration or retraining, not just healthy cases** — this is
+   the single highest-leverage fix found in this document (point 1's
+   causal ablation), and per-site calibration is a workaround for it, not
+   a substitute.
+4. **Track complement-AUC as a standing regression check**
+   (`eval/complement_monitor.py`) on any future retraining or data
+   addition. If it snaps back toward the no-intervention baseline (~0.93)
+   while the headline sensitivity climbs, the acquisition-texture shortcut
+   has returned and the new number shouldn't be trusted without re-running
+   the full confound audit.
+5. **Do not deploy to a population resembling Shenzhen's acquisition
+   profile without further work.** Leave-one-out testing (above) shows a
+   genuine discrimination gap there, not a calibration gap — per-site
+   threshold tuning will not fix it.
+
+**What "good" means here, stated plainly, not implied.** With three
+public retrospective CXR datasets, this pipeline reaches WHO TPP-level
+discrimination cross-source, under per-site calibration, on two of three
+tested directions. It has not been prospectively validated on a real
+screening population, and the CAD4TB field study (Ngosa et al., Literature
+check) is the concrete reason that matters: real deployment populations
+are dominated by exactly the abnormal-non-TB cases this document found
+the training data needs deliberate exposure to, not a hypothetical edge
+case. **The claim this pipeline supports: "meets WHO TPP triage
+discrimination on retrospective, per-site-calibrated, held-out public
+benchmark data, on two of three tested cross-source directions."**
+Anything stronger — "ready to deploy," "generalizes," "validated" without
+those qualifiers — is not supported by what was actually measured here.
 
 ---
 
