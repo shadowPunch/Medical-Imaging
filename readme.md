@@ -1321,9 +1321,10 @@ passing directions:**
 
 1. **Never deploy with a threshold frozen from a different site's
    validation data.** Demonstrated failure mode across this entire
-   document (43.8–44.0% specificity collapse) and independently
-   replicated in the field on an unrelated model (Shuaibu et al., 43.7%
-   specificity, Literature check).
+   document (43.8–44.0% specificity collapse) and the same qualitative
+   failure mode — not the same number, that closeness is coincidence —
+   independently observed in the field on an unrelated model (Shuaibu et
+   al., Literature check).
 2. **Collect ≈250–300 labeled negatives from the deployment site's own
    population before setting an operating threshold** — majority-negative
    is fine, need not be class-balanced (`eval/score_distribution_diagnosis.py`).
@@ -1516,21 +1517,26 @@ generalization, done before any writeup claims novelty.
   posted 2026-01-19 ([DOI: 10.64898/2026.01.17.26344327](https://www.medrxiv.org/content/10.64898/2026.01.17.26344327)) —
   the lead flagged as unverified in earlier drafts of this document; the
   fetch tool couldn't parse its PDF then, tracked down and read properly
-  now. **Directly on-point and strikingly close numerically.** They train
+  now. **Directly on-point qualitative corroboration.** They train
   DenseNet-121 on Shenzhen only (n=662) and test cross-source on Montgomery
-  (n=138): sensitivity 94.8%, but **specificity collapses to 43.7%** —
-  within a point of this document's own frozen-threshold TBX11K failure
-  (44.0%), on the analogous Shenzhen-source direction, from an entirely
-  independent model/training run. A second cohort (India, n=155, TB-only,
-  no negative controls) shows the opposite failure mode — sensitivity
-  collapses to 52.3% instead. Their conclusion: domain shift causes
-  "non-uniform degradation," and deployment needs "local validation and
-  calibration" — the same conclusion this document reaches independently,
-  now with an external quantitative anchor for how badly a frozen
-  cross-source threshold can fail (their 43.7% specificity, this
-  document's 44.0%, from unrelated model/data pairings, land within a
-  point of each other). Caveat carried forward honestly: this is a
-  non-peer-reviewed preprint (its own front matter says as much) with a
+  (n=138): sensitivity 94.8%, but specificity collapses to 43.7% — the same
+  failure mode this document reports (a frozen cross-source threshold
+  producing severe, well-below-floor specificity), on the analogous
+  Shenzhen-source direction, from an entirely independent model/training
+  run. A second cohort (India, n=155, TB-only, no negative controls) shows
+  the opposite failure mode — sensitivity collapses to 52.3% instead.
+  **Their 43.7% and this document's 44.0% landing within a point of each
+  other is not evidence of anything by itself and shouldn't be read as
+  numerical replication** — frozen-threshold specificity depends on the
+  validation split, the threshold-selection rule, and class balance, all
+  different between the two pipelines; two unrelated numbers landing close
+  is coincidence, not corroboration. The corroboration that *is* real is
+  qualitative: an independent group, unrelated model, related dataset pair,
+  observed the same cross-source specificity-collapse failure mode. Their
+  conclusion — domain shift causes "non-uniform degradation," deployment
+  needs "local validation and calibration" — is the same conclusion this
+  document reaches independently. Caveat carried forward honestly: this is
+  a non-peer-reviewed preprint (its own front matter says as much) with a
   small India cohort and no negative controls there, not a validated
   finding — cited as convergent evidence, not as settled fact.
 - **Ravin, Saha, Schweitzer, Elahi, Dako, Mollura & Chapman**, "Mitigating
@@ -1561,10 +1567,12 @@ well-documented reliability problems of their own) rather than a direct
 
 **Honest positioning:** known confound, quantified more precisely and with
 a more direct, convergent evidence chain than the prior work found here —
-not a novel discovery, but the specificity-collapse magnitude now has an
-independent numerical anchor (Shuaibu et al.'s 43.7% vs. this document's
-44.0%, unrelated model/data pairings) that wasn't available in earlier
-drafts. Write it up as replication-plus-quantification-plus-fix — the
+not a novel discovery. Shuaibu et al. now gives independent qualitative
+corroboration of the failure mode itself (a frozen cross-source threshold
+collapsing specificity, on an unrelated model) — their specific number
+(43.7%) landing close to this document's (44.0%) is coincidence, not
+evidence, and shouldn't be leaned on. Write it up as
+replication-plus-quantification-plus-fix — the
 negative-class-composition diagnosis and its retraining confirmation are
 this document's actual novel contribution beyond FairALM/DeGrave/Shuaibu
 et al., none of which investigate *why* threshold transfer fails, only
