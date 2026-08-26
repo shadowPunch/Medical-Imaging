@@ -1118,6 +1118,32 @@ config starts at 65.4). Read as confirmatory: the fix helps in both
 directions, magnitude uncertain in this one but the effect itself is not
 plausibly just noise here.
 
+**Third leg — Shenzhen direction, completing leave-one-source-out across
+all three sources.** Montgomery+TBX11K trained → held-out Shenzhen, same
+winning recipe, no baseline run for this direction (added directly at the
+winning config rather than re-establishing a pre-fix number already
+established twice):
+
+| | Val AUC | Held-out AUC | Frozen-threshold sens/spec | Ceiling sens@70 (95% CI) |
+|---|---|---|---|---|
+| Winning config (crop + mild-aug) | 0.997 | **0.757** [0.720, 0.793] | 71.7% / 62.6% | **66.7%** [61.1, 73.4] |
+
+**This is a materially worse result than the other two directions, and the
+honest thing is to report it as such rather than fold it into the same
+"meets WHO TPP under calibration" framing.** The ceiling itself — 66.7%,
+under a *perfect* per-site threshold — sits below the 90% sensitivity
+target. That's a genuine discrimination failure on held-out Shenzhen, not
+a calibration problem like the other two directions (where the ceiling
+cleared 90%+ and only the frozen threshold failed). **The winning recipe
+does not uniformly generalize across all three leave-one-out directions**;
+Shenzhen is the weak link. Why is open — not run down here, since it's a
+new question (why does *this* held-out source resist the same fix that
+worked for the other two) rather than a continuation of the
+negative-composition or acquisition-texture threads already investigated,
+and this document's remaining time went to Steps 4/5 per the agreed
+priority order. Flagged as a real limitation of the "winning config"
+claim, not swept into the aggregate.
+
 **Complement-AUC for the actual winning config (crop + mild-aug combined,
 not aug alone).** Training Shenzhen-only with the full winning recipe
 (`--lung-crop --texture-aug --aug-strength mild`) and scoring it against the
@@ -1255,13 +1281,17 @@ but narrower than it can sound quoted alone:
   points of the 70% specificity target with ≥90% confidence
   (`eval/score_distribution_diagnosis.py`); below ~100, per-site
   calibration is closer to noise than correction.
-- **Single-direction strength.** The 92.6% [90.3, 94.6] result is one
-  direction only — Shenzhen + Montgomery trained, TBX11K held out. The
-  reverse direction (Shenzhen + TBX11K trained, Montgomery held out) is
-  reported separately above with much wider CIs; it is confirmatory (same
-  direction of effect) but structurally cannot match this precision. Treat
-  the strong claim as belonging to one direction, not to the pipeline in
-  general.
+- **Single-direction strength, and the third direction actively fails.**
+  The 92.6% [90.3, 94.6] result is one direction — Shenzhen + Montgomery
+  trained, TBX11K held out. The Montgomery direction is confirmatory (same
+  effect direction, wider CIs). **The third leave-one-out direction
+  (Montgomery + TBX11K trained, Shenzhen held out) does not work**: ceiling
+  sens@spec70 is 66.7% [61.1, 73.4], below the 90% target even under a
+  perfect per-site threshold — a genuine discrimination failure, not a
+  calibration one. The winning recipe does not uniformly generalize across
+  all three leave-one-out directions; treat the 92.6% headline as belonging
+  to its one direction, and treat "this recipe generalizes" as false in
+  general until the Shenzhen-direction gap is understood.
 - **No untouched holdout remains.** All three sources (Shenzhen, Montgomery,
   TBX11K) informed tuning decisions somewhere in this process — which source
   to hold out, the augmentation-strength sweep, the lung-crop margin/dilation
