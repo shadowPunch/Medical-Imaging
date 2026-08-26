@@ -1281,13 +1281,40 @@ generalization, done before any writeup claims novelty.
   statistical grounding for that section, not discovered independently by
   it — the empirical result here should be read as a case study consistent
   with, not a replacement for, this more general methodology.
-- One more lead surfaced but **not verified**: a medRxiv preprint titled
-  "Geographic Domain Shift Precipitates Divergent Failure Modes in Deep
-  Learning–Based Tuberculosis Screening: A Multi-National External
-  Validation Study" looks directly on-point (TB screening + cross-site
-  failure modes) but its PDF wouldn't parse through the fetch tool used
-  here — worth tracking down properly before citing, not worth citing on a
-  title alone.
+- **Shuaibu, Khan, Alkhamis & Alkhamis**, "Geographic Domain Shift
+  Precipitates Divergent Failure Modes in Deep Learning–Based Tuberculosis
+  Screening: A Multi-National External Validation Study," medRxiv preprint,
+  posted 2026-01-19 ([DOI: 10.64898/2026.01.17.26344327](https://www.medrxiv.org/content/10.64898/2026.01.17.26344327)) —
+  the lead flagged as unverified in earlier drafts of this document; the
+  fetch tool couldn't parse its PDF then, tracked down and read properly
+  now. **Directly on-point and strikingly close numerically.** They train
+  DenseNet-121 on Shenzhen only (n=662) and test cross-source on Montgomery
+  (n=138): sensitivity 94.8%, but **specificity collapses to 43.7%** —
+  within a point of this document's own frozen-threshold TBX11K failure
+  (44.0%), on the analogous Shenzhen-source direction, from an entirely
+  independent model/training run. A second cohort (India, n=155, TB-only,
+  no negative controls) shows the opposite failure mode — sensitivity
+  collapses to 52.3% instead. Their conclusion: domain shift causes
+  "non-uniform degradation," and deployment needs "local validation and
+  calibration" — the same conclusion this document reaches independently,
+  now with an external quantitative anchor for how badly a frozen
+  cross-source threshold can fail (their 43.7% specificity, this
+  document's 44.0%, from unrelated model/data pairings, land within a
+  point of each other). Caveat carried forward honestly: this is a
+  non-peer-reviewed preprint (its own front matter says as much) with a
+  small India cohort and no negative controls there, not a validated
+  finding — cited as convergent evidence, not as settled fact.
+- **Ravin, Saha, Schweitzer, Elahi, Dako, Mollura & Chapman**, "Mitigating
+  domain shift in AI-based tuberculosis screening with unsupervised domain
+  adaptation," arXiv:2111.04893 (2021) — applies Domain-Invariant Feature
+  Learning (DIFL) to a ResNet-50 TB classifier across four public TB
+  datasets, reporting that out-of-domain performance improves substantially
+  with DIFL versus without it. Relevant as an example of an actual fix
+  attempted for this class of problem (source-invariant feature learning,
+  closer in spirit to FairALM than to this document's lung-crop + texture-
+  aug + negative-composition approach) — not verified in detail beyond its
+  abstract-level claims, and doesn't address negative-class composition or
+  threshold-calibration transfer specifically.
 
 **What doesn't appear to have direct precedent** (in what this check
 found — a real literature review before submission would need to confirm
@@ -1305,9 +1332,16 @@ well-documented reliability problems of their own) rather than a direct
 
 **Honest positioning:** known confound, quantified more precisely and with
 a more direct, convergent evidence chain than the prior work found here —
-not a novel discovery. Write it up as replication-plus-quantification-
-plus-fix, cite FairALM and DeGrave as the closest prior art, and track down
-the medRxiv lead properly before final submission.
+not a novel discovery, but the specificity-collapse magnitude now has an
+independent numerical anchor (Shuaibu et al.'s 43.7% vs. this document's
+44.0%, unrelated model/data pairings) that wasn't available in earlier
+drafts. Write it up as replication-plus-quantification-plus-fix — the
+negative-class-composition diagnosis and its retraining confirmation are
+this document's actual novel contribution beyond FairALM/DeGrave/Shuaibu
+et al., none of which investigate *why* threshold transfer fails, only
+that it does. Cite FairALM, DeGrave, Shuaibu et al., and Ngosa et al. as
+the closest prior art for the phenomenon; Riley et al. for the
+calibration-sample-size methodology.
 
 ---
 
