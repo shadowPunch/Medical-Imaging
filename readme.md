@@ -120,12 +120,55 @@ assumed from a "COMPLETE" status alone:
 - 2000/2000 training steps completed, 0 errors/tracebacks in the entire log.
 - Paired DRR-supervision loss: 0.3782 → 0.1511 → 0.0789 (clean, substantial,
   monotonic-ish decrease).
-- Shape-induction loss: 1.4689 → 0.6563 → 1.1237 (noisier, as expected for
-  an unpaired re-projection term, but consistently well below the ~2.0
-  uncorrelated-baseline ceiling).
+- Shape-induction loss: 1.4689 → 0.6563 → 1.1237 at three spot-checked
+  points (noisier, as expected for an unpaired re-projection term, but
+  consistently well below the ~2.0 uncorrelated-baseline ceiling). **This
+  three-point sample reads like a late divergence; the full 100-point
+  per-20-step trace (below) shows it isn't one** — an early convergence
+  phase followed by a flat, noisy plateau, with the last logged value
+  (1.1237, at step 2000) just an outlier within that noise, not the start
+  of a trend.
 - Final export ran on a real held-out CXR (`s1559.png`), not a synthetic
   fallback — confirms a genuine end-to-end real-data path, not just a
   shape-check.
+
+**Loss-trajectory diagnosis (full 100-point trace, every 20 of 2000 steps,
+extracted from the Kaggle run log — not re-run, this data already
+existed).** Windowed means (200-step / 10-point windows):
+
+| Steps | Shape-induction mean | std |
+|---|---|---|
+| 20–200 | 1.355 | 0.456 |
+| 220–400 | 1.168 | 0.464 |
+| 420–600 | 0.954 | 0.293 |
+| 620–800 | 0.933 | 0.265 |
+| 820–1000 | 0.912 | 0.218 |
+| 1020–1200 | 0.824 | 0.095 |
+| 1220–1400 | 0.805 | 0.137 |
+| 1420–1600 | 0.845 | 0.212 |
+| 1620–1800 | 0.780 | 0.114 |
+| 1820–2000 | 0.834 | 0.181 |
+
+**There is no divergence to fix.** The term drops ~40% over the first
+~1000 steps (1.36→~0.82) then plateaus — a linear fit over steps 1000–2000
+gives a slope of +0.00003/step (+3.8% of the plateau mean over the full
+1000 steps, well inside the plateau's own noise band, std≈0.16); over the
+*full* run the slope is negative (-0.00025/step, a genuine ~0.50 net
+decrease). The paired-loss term keeps improving throughout, including
+during the shape-induction plateau (slope -0.065/1000 steps in the same
+window) — no sign of the shared encoder being pulled backward by the
+unpaired term. Step-to-step, `corr(Δpaired, Δshape_induction) = 0.05`
+— essentially zero — meaning the two terms aren't fighting each other
+either; they fluctuate independently. **The original three-point summary
+(spot-checking early/mid/last) happened to land on a low point (0.66) and
+then the single final logged value (1.12, an ordinary draw from the noisy
+plateau) — that reads as a "turn" with three points and doesn't exist in
+the full trace.** No retraining, no loss-weight rebalancing, and no
+uncertainty weighting is warranted by this evidence; the honest
+conclusion is closer trend-reading corrects the earlier framing, not that
+a fix was needed and applied. Worth revisiting only if a longer future run
+shows the plateau actually trending upward over a wider window than
+tested here — it doesn't, in the one run that exists.
 
 This is a single run, not a validated model: no PSNR/SSIM/LPIPS against
 paired CT ground truth yet (§10's quantitative validation), no held-out
