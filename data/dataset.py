@@ -68,6 +68,7 @@ def load_tbx11k(
     split: str = "train",
     latent_as_positive: bool = False,
     variant: str = "",
+    exclude_tags: frozenset[str] = frozenset(),
 ) -> list[tuple[Path, int]]:
     """
     TBX11K Supervisely format: one JSON per image in {split}/ann/.
@@ -78,6 +79,11 @@ def load_tbx11k(
       active_tb / active&latent_tb → 1
       latent_tb → excluded (or 1 if latent_as_positive=True)
       no_tag (test split) → excluded
+
+    exclude_tags drops samples by their raw tag name (e.g. 'sick_but_non-tb')
+    before the label mapping above — for negative-class-composition
+    ablations that need one subgroup absent from a specific split while
+    every other split still sees the full taxonomy.
 
     Skips the test split silently — it has no labels.
     """
@@ -100,6 +106,8 @@ def load_tbx11k(
 
         ann = json.loads(ann_path.read_text())
         tag_name = ann["tags"][0]["name"] if ann["tags"] else "no_tag"
+        if tag_name in exclude_tags:
+            continue
         label = label_map.get(tag_name)
 
         if label is None:

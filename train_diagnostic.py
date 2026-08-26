@@ -83,10 +83,24 @@ def build_splits(args, cfg: DataConfig, variant: str = ""):
             # purity (TBX11K informs training here) to isolate one variable:
             # does the training negative class containing non-TB pathology
             # change discrimination/calibration on TBX11K-like negatives.
-            train_samples.extend(load_tbx11k(
+            #
+            # exclude_tbx11k_tag applies only to what TRAIN/VAL are drawn
+            # from — held-out always sees the full taxonomy regardless,
+            # since the ablation asks "does never training on this subgroup
+            # hurt performance on that same subgroup at eval time."
+            exclude = frozenset(args.exclude_tbx11k_tag or [])
+            tbx_train_pool = load_tbx11k(
                 root, split="train", variant=variant,
                 latent_as_positive=cfg.tbx11k_latent_as_positive,
-            ))
+                exclude_tags=exclude,
+            )
+            # 85/15 split, same pattern as Shenzhen/Montgomery above — needed
+            # so a frozen threshold has a validation source even when this
+            # is the only requested dataset (TBX11K-only ablations).
+            idx   = rng.permutation(len(tbx_train_pool))
+            n_val = max(1, int(len(tbx_train_pool) * 0.15))
+            val_samples.extend(  [tbx_train_pool[i] for i in idx[:n_val]])
+            train_samples.extend([tbx_train_pool[i] for i in idx[n_val:]])
             held_out.extend(load_tbx11k(
                 root, split="val", variant=variant,
                 latent_as_positive=cfg.tbx11k_latent_as_positive,
@@ -135,6 +149,12 @@ def main() -> None:
                              "'tbx11k-val' holds out only TBX11K's val split, letting its "
                              "train split (incl. sick_but_non-tb negatives) join training — "
                              "see build_splits().")
+    parser.add_argument("--exclude-tbx11k-tag", type=str, nargs="+", default=None,
+                        help="Only with --held-out tbx11k-val: raw TBX11K annotation tags "
+                             "(e.g. sick_but_non-tb) to drop from the TRAIN split only — "
+                             "held-out always keeps the full taxonomy. Negative-class-"
+                             "composition ablation: does excluding a subgroup from training "
+                             "hurt performance on that same subgroup at eval time.")
     parser.add_argument("--output",    type=str, default="outputs/diagnostic")
     parser.add_argument("--backbone",  type=str, default="efficientnet_b0")
     parser.add_argument("--epochs",    type=int, default=50)
