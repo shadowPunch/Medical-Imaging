@@ -1138,17 +1138,35 @@ on the identical TBX11K-val held-out set:
 | **healthy + sick_but_non-tb (full)** | **0.981** [0.961, 0.996] | 90.2% / **99.8%** [99.5, 99.9] | ✓✓ passes both |
 
 **Non-overlapping CIs on both AUC and specificity, single source, single
-variable changed.** This is the cleanest evidence in this document for the
-causal claim — a ~47-point specificity swing (53.1%→99.8%) from one
-training-data decision, with the cross-source-purity confound and the
-multi-source-pooling confound both removed. Combined with the earlier
-multi-source retraining experiment (which showed the same direction of
-effect at larger scale) and the Montgomery-direction retrospective
-evidence above, three independent pieces of evidence now agree: **the
-training recipe going forward should never exclude available non-TB
-pathology from the negative class** — whenever a source with that
-annotation granularity is in the training pool, use all of it, not just
-the healthy subset.
+variable changed** — except one variable wasn't actually held constant:
+the full-composition arm's training pool (6,496) is nearly double the
+healthy-only arm's (3,496), since including sick_but_non-tb also means
+including more images. Composition and volume were confounded, not
+isolated as intended.
+
+**Matched-N rerun, volume held constant (`--tbx11k-neg-cap`, new).**
+Subsamples the full-composition negative pool down to the healthy-only
+arm's exact negative count (3,000) before the same 85/15 split — both
+arms then train on identically-sized pools (2,972 train / 524 val),
+composition the only thing differing:
+
+| Training negatives | n (train pool) | Held-out AUC | Frozen-threshold sens/spec |
+|---|---|---|---|
+| healthy only | 3,496 | 0.933 [0.919, 0.946] | 99.4% / 53.1% [50.8, 55.6] |
+| full, **matched to 3,496** | 3,496 | 0.988 [0.974, 0.998] | 93.3% / **99.6%** [99.2, 99.9] |
+| full, unmatched (6,496, for reference) | 6,496 | 0.981 [0.961, 0.996] | 90.2% / 99.8% [99.5, 99.9] |
+
+**The matched and unmatched full-composition results are statistically
+indistinguishable from each other (heavily overlapping CIs on AUC, sens,
+and spec) and both land nowhere near healthy-only's 53.1%.** The effect
+is composition, not volume — confirmed by removing the confound rather
+than just asserting it was small. Combined with the earlier multi-source
+retraining experiment (same direction of effect at larger scale) and the
+Montgomery-direction retrospective evidence above, three independent
+pieces of evidence now agree: **the training recipe going forward should
+never exclude available non-TB pathology from the negative class** —
+whenever a source with that annotation granularity is in the training
+pool, use all of it, not just the healthy subset.
 
 The strength sweep confirms the exact mechanism predicted: TB findings
 (cavitation, miliary nodules, reticulonodular infiltrate) are themselves

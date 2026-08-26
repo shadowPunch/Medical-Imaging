@@ -119,9 +119,16 @@ def build_splits(args, cfg: DataConfig, variant: str = ""):
                 latent_as_positive=cfg.tbx11k_latent_as_positive,
             ))
         else:
+            # exclude_tbx11k_tag applies here too (not just the tbx11k-val
+            # branch) — e.g. to test whether excluding sick_but_non-tb from
+            # TBX11K's contribution changes a *different* held-out
+            # direction's result (Shenzhen/Montgomery), not just TBX11K's
+            # own val split.
+            exclude = frozenset(args.exclude_tbx11k_tag or [])
             for split, target in [("train", train_samples), ("val", val_samples)]:
                 s = load_tbx11k(root, split=split, variant=variant,
-                                latent_as_positive=cfg.tbx11k_latent_as_positive)
+                                latent_as_positive=cfg.tbx11k_latent_as_positive,
+                                exclude_tags=exclude)
                 target.extend(s)
 
     return train_samples, val_samples, held_out
