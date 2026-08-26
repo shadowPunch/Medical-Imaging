@@ -58,7 +58,13 @@ confound before it found a real fix.**
   earlier explanation for the calibration-size curve's shape (a bimodal
   "sparse valley" effect) — the curve barely moved even with the
   bimodality gone, pointing instead to a generic, distribution-free
-  order-statistic effect. An augmentation-strength sweep
+  order-statistic effect. **Settled the causal question cleanly** with a
+  single-source, single-variable ablation (TBX11K only, no pooling
+  confound): excluding sick_but_non-tb from training gives 53.1%
+  specificity on held-out TBX11K, including it gives 99.8% — non-
+  overlapping CIs, the training recipe going forward should always
+  include available non-TB pathology in the negative class. An
+  augmentation-strength sweep
   (mild/medium/aggressive) confirmed the mechanism: too-aggressive texture
   randomization destroys real diagnostic texture (cavitation, nodules) along
   with the confound, and mild wins because it removes less signal overall
@@ -1041,6 +1047,35 @@ sens / **97.5%** spec — the *only* frozen-threshold result in this entire
 document that clears WHO TPP before this retraining experiment was run.
 That's consistent with the causal claim here, sitting unnoticed in results
 already reported earlier, not cherry-picked after the fact to fit it.
+
+**Settling it properly: within-TBX11K, one variable, no pooling confound.**
+The retraining experiment above pooled Shenzhen+Montgomery+TBX11K, so
+"does negative composition matter" was entangled with "does pooling more
+sources help." Isolated it: same source (TBX11K) on both sides, only the
+training negative class differs. `load_tbx11k` gained an `exclude_tags`
+param (`data/dataset.py`) and `train_diagnostic.py` an
+`--exclude-tbx11k-tag` flag that drops a subgroup from train/val only —
+held-out always keeps the full taxonomy. Two runs, `--tbx11k` only (no
+Shenzhen/Montgomery at all), same lung-crop + mild-aug recipe, evaluated
+on the identical TBX11K-val held-out set:
+
+| Training negatives | Held-out AUC | Frozen-threshold sens/spec | WHO TPP |
+|---|---|---|---|
+| healthy only (sick_but_non-tb excluded) | 0.933 [0.919, 0.946] | 99.4% / **53.1%** [50.8, 55.6] | ✗ fails |
+| **healthy + sick_but_non-tb (full)** | **0.981** [0.961, 0.996] | 90.2% / **99.8%** [99.5, 99.9] | ✓✓ passes both |
+
+**Non-overlapping CIs on both AUC and specificity, single source, single
+variable changed.** This is the cleanest evidence in this document for the
+causal claim — a ~47-point specificity swing (53.1%→99.8%) from one
+training-data decision, with the cross-source-purity confound and the
+multi-source-pooling confound both removed. Combined with the earlier
+multi-source retraining experiment (which showed the same direction of
+effect at larger scale) and the Montgomery-direction retrospective
+evidence above, three independent pieces of evidence now agree: **the
+training recipe going forward should never exclude available non-TB
+pathology from the negative class** — whenever a source with that
+annotation granularity is in the training pool, use all of it, not just
+the healthy subset.
 
 The strength sweep confirms the exact mechanism predicted: TB findings
 (cavitation, miliary nodules, reticulonodular infiltrate) are themselves
