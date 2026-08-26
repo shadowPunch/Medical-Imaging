@@ -240,26 +240,51 @@ mean almost everywhere, rather than learning the sparse, patient-specific
 structure — the model may be sitting in exactly that local optimum rather
 than being partway to a better one.
 
-**Candidate fix prepared, not yet validated — the honest state of it.**
-Added an `--paired-loss {mse,l1}` option to `recon/train_recon.py`
+**Candidate fix tested — L1 loss does not fix this, at least not quickly.**
+Added a `--paired-loss {mse,l1}` option to `recon/train_recon.py`
 (`paired_step` now takes `loss_fn`) since L1 is the standard alternative
 for this exact failure mode — it penalizes large deviations less
 quadratically and is known to favor sparser solutions on skewed targets —
-plus a `--diagnose-every N` flag that prints the same near-zero-fraction
-check during training so this could be watched directly instead of
-inferred after the fact. **Tried to test this locally before spending
-more cloud GPU time on a hypothesis; the local test didn't produce a
-result.** At a reduced scale chosen to fit the 4 GB card
-(`--image-size 192 --volume-size 48`), the run showed 0% GPU utilization
-after 25+ minutes of wall time despite active CPU load — stuck on
-CT-loading/resampling I/O, not actually training — and was killed rather
-than left to run indefinitely on an unclear timeline. **So: the mechanism
-diagnosis above is solid (direct measurement, no training required to
-get it); the L1 fix is a well-motivated, ready-to-run candidate; whether
-it actually works is untested.** Confirming it needs either a working
-local repro (this machine didn't cooperate) or another Kaggle run —
-meaningful cloud GPU time, spent testing a hypothesis rather than a
-result. Also still worth doing regardless of the loss-function question:
+plus `--diagnose-every N` to print the near-zero-fraction check during
+training instead of only inferring it after the fact. First local attempt
+misdiagnosed the run as stuck (0% GPU utilization on one `nvidia-smi`
+snapshot) and killed it; timing the pipeline afterward showed
+`load_ct_volume` alone takes ~7–9s per call against ~0.3–0.4s for the
+model forward/backward — at that ratio a random snapshot is far more
+likely to catch the CPU-bound CT-load phase than the brief GPU burst, so
+0% GPU utilization was normal I/O-bound behavior, not a hang. The earlier
+run was also silently empty in its log file only because Python
+block-buffers stdout when redirected to a file — re-ran both with `-u`
+(unbuffered) and the runs were fine throughout, just slow.
+
+Reran MSE and L1 side by side, matched scale
+(`--image-size 192 --volume-size 48`), matched checkpoints (steps 25/50/75):
+
+| Step | MSE: pred min / mean / frac&lt;0.02 | L1: pred min / mean / frac&lt;0.02 |
+|---|---|---|
+| 25 | 0.454 / 0.538 / 0.0% | 0.515 / 0.625 / 0.0% |
+| 50 | 0.407 / 0.507 / 0.0% | 0.389 / 0.531 / 0.0% |
+| 75 | 0.410 / 0.494 / 0.0% | 0.429 / 0.509 / 0.0% |
+
+**No meaningful difference between the two loss functions at this scale
+and duration — both stay at 0% near-zero throughout, neither shows any
+movement toward the target's sparse structure.** The L1 hypothesis was a
+reasonable one and is now a tested negative, not an untested guess: swapping
+the loss function alone doesn't resolve this within 75 steps. Plausible
+remaining explanations, none tested: the softplus floor plus current
+initialization may need substantially more steps to unlearn a
+positive-biased starting point regardless of loss shape (the original
+2000-step full-scale run showed the same pattern, so "more steps" hasn't
+actually been ruled out — 75 reduced-scale steps is not comparable);
+an explicit sparsity term (e.g., an L1 penalty *on the prediction itself*,
+not just the reconstruction error) might be needed rather than swapping
+the reconstruction loss; or the architecture's 2D-to-3D "lift" may not be
+the bottleneck at all and this is closer to an inherent difficulty of
+single-view 3D reconstruction at this model scale. Reporting the tested
+negative rather than moving on to the next guess without saying the first
+one didn't pan out.
+
+Also still worth doing regardless of the loss-function question:
 hold out CT series *during* training (not just this post-hoc check) and
 track the near-zero-fraction / PSNR on that holdout across training, so
 convergence is judged on evidence rather than training loss alone.
