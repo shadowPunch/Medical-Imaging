@@ -49,7 +49,7 @@ def main() -> None:
     parser.add_argument("--montgomery", type=str, default=None)
     parser.add_argument("--tbx11k",     type=str, default=None)
     parser.add_argument("--held-out",   type=str, required=True,
-                        choices=["shenzhen", "montgomery", "tbx11k"])
+                        choices=["shenzhen", "montgomery", "tbx11k", "tbx11k-val"])
     parser.add_argument("--lung-crop",  action="store_true")
     parser.add_argument("--variant",    type=str, default=None,
                         help="Raw variant string override (e.g. lungcrop_clahe) — bypasses --lung-crop")

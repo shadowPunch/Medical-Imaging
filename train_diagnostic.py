@@ -74,6 +74,23 @@ def build_splits(args, cfg: DataConfig, variant: str = ""):
                     root, split=split, variant=variant,
                     latent_as_positive=cfg.tbx11k_latent_as_positive,
                 ))
+        elif args.held_out == "tbx11k-val":
+            # Negative-class-composition experiment: TBX11K's train split
+            # (including sick_but_non-tb negatives, collapsed to label 0
+            # like everywhere else) joins training instead of being fully
+            # withheld; only its own val split — disjoint from that train
+            # split — is held out. This deliberately gives up cross-source
+            # purity (TBX11K informs training here) to isolate one variable:
+            # does the training negative class containing non-TB pathology
+            # change discrimination/calibration on TBX11K-like negatives.
+            train_samples.extend(load_tbx11k(
+                root, split="train", variant=variant,
+                latent_as_positive=cfg.tbx11k_latent_as_positive,
+            ))
+            held_out.extend(load_tbx11k(
+                root, split="val", variant=variant,
+                latent_as_positive=cfg.tbx11k_latent_as_positive,
+            ))
         else:
             for split, target in [("train", train_samples), ("val", val_samples)]:
                 s = load_tbx11k(root, split=split, variant=variant,
@@ -113,8 +130,11 @@ def main() -> None:
     parser.add_argument("--montgomery", type=str, default=None, help="Path to Montgomery dataset root")
     parser.add_argument("--tbx11k",    type=str, default=None, help="Path to TBX11K dataset root")
     parser.add_argument("--held-out",  type=str, default="montgomery",
-                        choices=["shenzhen", "montgomery", "tbx11k", "none"],
-                        help="Source reserved for cross-source generalisation eval")
+                        choices=["shenzhen", "montgomery", "tbx11k", "tbx11k-val", "none"],
+                        help="Source reserved for cross-source generalisation eval. "
+                             "'tbx11k-val' holds out only TBX11K's val split, letting its "
+                             "train split (incl. sick_but_non-tb negatives) join training — "
+                             "see build_splits().")
     parser.add_argument("--output",    type=str, default="outputs/diagnostic")
     parser.add_argument("--backbone",  type=str, default="efficientnet_b0")
     parser.add_argument("--epochs",    type=int, default=50)

@@ -52,15 +52,18 @@ class _PathDataset(Dataset):
         return self.transform(img)
 
 
-def load_tbx11k_negative_subgroups(root: Path, variant: str = "") -> tuple[list[Path], list[str]]:
+def load_tbx11k_negative_subgroups(
+    root: Path, variant: str = "", splits: tuple[str, ...] = ("train", "val")
+) -> tuple[list[Path], list[str]]:
     """
     Returns (paths, subgroup) for TBX11K negatives only, subgroup in
-    {'healthy', 'sick_non_tb'}, pooled across train+val — matches how
-    build_splits(..., held_out='tbx11k') pools both splits into the
-    held-out set.
+    {'healthy', 'sick_non_tb'}. Default pools train+val, matching how
+    build_splits(..., held_out='tbx11k') pools both into the held-out set.
+    Pass splits=('val',) when checking a checkpoint trained with
+    held_out='tbx11k-val' — its train split isn't a genuine holdout anymore.
     """
     paths, subgroups = [], []
-    for split in ("train", "val"):
+    for split in splits:
         img_dir = root / split / (f"img_{variant}" if variant else "img")
         ann_dir = root / split / "ann"
         for img_path in sorted(img_dir.glob("*.png")):
@@ -100,6 +103,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--tail-threshold", type=float, default=0.5,
                         help="Score above which a negative counts as 'in the tail' for the composition breakdown.")
+    parser.add_argument("--splits", type=str, nargs="+", default=["train", "val"],
+                        choices=["train", "val"],
+                        help="Which TBX11K splits to pool. Use 'val' only when checking a "
+                             "checkpoint trained with --held-out tbx11k-val (its train split "
+                             "isn't a genuine holdout).")
     parser.add_argument("--output-dir", type=str, required=True)
     args = parser.parse_args()
 
@@ -107,7 +115,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     variant = args.variant if args.variant is not None else ("lungcrop" if args.lung_crop else "")
 
-    paths, subgroups = load_tbx11k_negative_subgroups(Path(args.tbx11k), variant=variant)
+    paths, subgroups = load_tbx11k_negative_subgroups(Path(args.tbx11k), variant=variant, splits=tuple(args.splits))
     subgroups = np.array(subgroups)
     n_healthy = int((subgroups == "healthy").sum())
     n_sick = int((subgroups == "sick_non_tb").sum())

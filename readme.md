@@ -47,7 +47,18 @@ confound before it found a real fix.**
   concrete number via a calibration-set-size sweep: **≈250–300 labeled
   negatives from the target site to hit the 70% specificity target within
   ±5 points at ≥90% confidence**; below ~100, calibration is closer to
-  noise than correction. An augmentation-strength sweep
+  noise than correction. **Then tested the direct fix**, not just the
+  calibration workaround: retraining with TBX11K's own train split
+  (including sick_but_non-tb) added to the negative class took
+  frozen-threshold specificity from 43.8%→97.6% on identical held-out
+  images and collapsed the healthy/sick_but_non-tb bimodality — confirming
+  the mechanism is real and fixable at the source, though this specific
+  test isn't a fair cross-source comparison (TBX11K informed training) so
+  it isn't a new headline number. It also disproved this document's own
+  earlier explanation for the calibration-size curve's shape (a bimodal
+  "sparse valley" effect) — the curve barely moved even with the
+  bimodality gone, pointing instead to a generic, distribution-free
+  order-statistic effect. An augmentation-strength sweep
   (mild/medium/aggressive) confirmed the mechanism: too-aggressive texture
   randomization destroys real diagnostic texture (cavitation, nodules) along
   with the confound, and mild wins because it removes less signal overall
@@ -287,8 +298,11 @@ python train_diagnostic.py \
 ```
 
 `--held-out` also accepts `tbx11k` (train on Shenzhen+Montgomery, test on
-TBX11K — the other cross-source direction) or `none` (train on all sources,
-no held-out evaluation).
+TBX11K — the other cross-source direction), `tbx11k-val` (TBX11K's train
+split joins training, only its val split is held out — used for the
+negative-class-composition retraining experiment; not a cross-source test,
+see Robustness interventions), or `none` (train on all sources, no
+held-out evaluation).
 
 ---
 
@@ -873,6 +887,118 @@ separately, not asserted together:**
 Reading any one part as the whole story overclaims; reading all three
 together is what this pipeline currently supports.
 
+**Retraining experiment: fix the training-data gap at the source
+(`train_diagnostic.py --held-out tbx11k-val`, new).** TBX11K already has
+the labels needed to test this directly — no new data collection. Added a
+new held-out mode: TBX11K's **train** split (6,496 images, including its
+sick_but_non-tb negatives) joins the training pool instead of being fully
+withheld; only TBX11K's **val** split (1,764 images, disjoint from that
+train split) is held out. Same recipe otherwise (lung-crop + mild-aug),
+same validation source for the frozen threshold (Shenzhen+Montgomery).
+Four falsifiable predictions were made before running this:
+
+1. The healthy/sick_but_non-tb bimodality collapses to unimodal.
+2. Frozen-threshold specificity recovers well above 44%.
+3. The calibration-set-size requirement drops from ≈250–300 toward ≈50–100.
+4. sens@spec70 probably *falls* below 92.6%, because distinguishing TB from
+   other lung pathology is a genuinely harder task than distinguishing TB
+   from healthy — and if it doesn't fall, that's worth explaining, not
+   quietly accepting.
+
+**Important caveat before the results: this is not a fair cross-source
+test, by construction.** Letting TBX11K's train split join training also
+eliminates TBX11K as a naive, never-seen source — the held-out val split
+now shares scanner/protocol/population with its own training split in a
+way Montgomery and Shenzhen never did with each other. Any number below
+should be read as "does the training-data fix work," not as a new,
+higher headline replacing 92.6% — that comparison is confounded and this
+document says so explicitly rather than letting a bigger number stand in
+for a fixed cross-source claim.
+
+Matched comparison — same 1,764 held-out images scored by both checkpoints
+(old = no TBX11K in training at all; new = TBX11K's train split added):
+
+| | Held-out AUC | Frozen-threshold sens/spec | Ceiling sens@spec70 (95% CI) |
+|---|---|---|---|
+| Old checkpoint (`step3_mild_lungcrop_tbx11k`) | 0.894 | 97.6% / **43.8%** ✗ | 92.7% [87.4, 96.4] |
+| **New checkpoint (`step5_negcomp_tbx11k-val`)** | **0.998** | 97.6% / **97.6%** ✓✓ | **100.0%** [100.0, 100.0] |
+
+**Predictions 1 and 2: confirmed, sharply.**
+
+![TBX11K negative-class scores by subgroup after retraining: healthy vs. sick_but_non-tb, held-out val split only](figures/tbx11k_negcomp_retrain_negative_composition.png)
+
+| Subgroup (held-out val only) | median score, before | median score, after |
+|---|---|---|
+| healthy | 0.055 | 0.255 |
+| sick_but_non-tb | 0.722 | **0.270** |
+
+The two subgroups are now nearly indistinguishable (IQR 0.028 vs. 0.042) —
+the bimodality is gone. The tail didn't vanish entirely (46/800
+sick_but_non-tb, 5.8%, still score >0.5 vs. 4/800, 0.5%, for healthy — an
+~12× relative rate, down from ~42× before) but it went from *the dominant
+pattern in the data* to a small residual. Frozen-threshold specificity went
+from 43.8% to 97.6% on the identical images — the training-data fix is
+real, not just directionally suggestive.
+
+**Prediction 3: not confirmed — and the reason why corrects an earlier
+claim in this document.**
+
+![Calibration-set-size sweep after retraining, unimodal negative distribution](figures/tbx11k_negcomp_retrain_calibration_size_sweep.png)
+
+| n (negatives) | P(within ±5pt of 70%), before (bimodal) | after (unimodal) |
+|---|---|---|
+| 100 | 72.0% | 71.0% |
+| 200 | 87.2% | 84.4% |
+| 300 | 93.4% | 90.0% |
+
+**Essentially unchanged**, despite the negative distribution going from
+sharply bimodal to tightly unimodal. This falsifies the specific mechanism
+claimed earlier in this section — that the calibration curve's shape comes
+from the 70th-percentile threshold sitting in a low-density valley between
+two modes. If that were the driver, removing the valley should have made
+small-sample calibration much more reliable, and it didn't. **The better
+explanation, consistent with both curves:** treating a calibration
+threshold's *achieved coverage on new data* as a rank statistic (the
+probability-integral transform maps any continuous distribution's order
+statistics onto Uniform(0,1) order statistics) makes its sampling variance
+≈ p(1−p)/n **regardless of the underlying distribution's shape** — at
+p=0.70, that predicts std ≈ 0.046 at n=100 and ≈ 0.027 at n=300, matching
+both the bimodal and unimodal curves' observed std (0.046–0.048 and
+0.027–0.028) closely. This is the same distribution-free reasoning behind
+Riley et al.'s external-validation sample-size formulas (Literature check,
+below) — it explains why *this* number didn't move even though the
+mechanism story from before did. Worth stating plainly: the earlier
+"sparse valley" explanation was a plausible-sounding mechanism that this
+follow-up experiment was positioned to test almost by accident, and it
+didn't survive the test — left in this document rather than quietly
+corrected, because the correction is itself informative about which
+explanation actually generalizes.
+
+**Prediction 4: not cleanly testable with this design — say so rather than
+force a reading.** The ceiling rose to 100%, the opposite of the predicted
+direction. But this experiment changed two things at once (training
+negative-class composition *and* cross-source purity), and the
+in-distribution effect plausibly dominates: a model that has seen TBX11K's
+own train split should ace TBX11K's val split regardless of how hard the
+negative class is, simply because train/val here share a source in a way
+no other comparison in this document does. This design cannot isolate
+"is TB-vs-other-pathology harder than TB-vs-healthy" from "is in-source
+val easier than cross-source val" — both point the same direction here, so
+a clean answer needs a different experiment (e.g. sick_but_non-tb-labeled
+negatives from a source disjoint from the held-out evaluation, which no
+dataset in this codebase currently provides). Flagged as open, not resolved.
+
+**Retrospective corroboration, in data already collected before this
+experiment was designed.** The Montgomery-direction winning-config run
+(`stage1_montgomery_winning`, reported earlier in this section) trained on
+Shenzhen+TBX11K — which already put TBX11K's train-split sick_but_non-tb
+cases in its training negatives, for the unrelated reason that Montgomery
+was the held-out source that run. Its frozen-threshold result was 53.4%
+sens / **97.5%** spec — the *only* frozen-threshold result in this entire
+document that clears WHO TPP before this retraining experiment was run.
+That's consistent with the causal claim here, sitting unnoticed in results
+already reported earlier, not cherry-picked after the fact to fit it.
+
 The strength sweep confirms the exact mechanism predicted: TB findings
 (cavitation, miliary nodules, reticulonodular infiltrate) are themselves
 high-frequency texture, so aggressive randomization of sharpening/noise/
@@ -1033,11 +1159,22 @@ but narrower than it can sound quoted alone:
   training negatives never taught the model to place — confirmed directly
   by splitting held-out negatives on their raw annotation (median score
   0.722 for sick-but-non-TB vs. 0.055 for healthy, `eval/negative_composition_probe.py`).
-  Per-site recalibration compensates for this but doesn't fix it; the
-  direct fix (adding non-TB pathology to the training negative class) is
-  not yet run. The recalibration workaround has a concrete cost: ≈250–300
-  labeled *negatives* from the target site's own population to land within
-  ±5 points of the 70% specificity target with ≥90% confidence
+  Per-site recalibration compensates for this but doesn't fix it. **The
+  direct fix was tried** (`--held-out tbx11k-val`, adding TBX11K's train
+  split to training): on the identical held-out images, frozen-threshold
+  specificity went from 43.8% to 97.6% and the healthy/sick_but_non-tb
+  bimodality collapsed — but this specific test isn't a fair cross-source
+  comparison (TBX11K informed training, so its own val split is no longer
+  a naive source), so it demonstrates the mechanism is real and fixable,
+  not a new validated headline number. It also falsified this document's
+  own earlier explanation for *why* the calibration-set-size curve is
+  wide — that curve barely moved even with the bimodality gone, pointing
+  instead to a distribution-free order-statistic effect (≈p(1−p)/n) rather
+  than the bimodal-valley story originally proposed; see the retraining
+  subsection above. The recalibration workaround still has a concrete
+  cost when the training-data fix isn't available: ≈250–300 labeled
+  *negatives* from the target site's own population to land within ±5
+  points of the 70% specificity target with ≥90% confidence
   (`eval/score_distribution_diagnosis.py`); below ~100, per-site
   calibration is closer to noise than correction.
 - **Single-direction strength.** The 92.6% [90.3, 94.6] result is one
@@ -1126,6 +1263,24 @@ generalization, done before any writeup claims novelty.
   subgroup-split experiment (`eval/negative_composition_probe.py`,
   Robustness interventions section) and would need its own literature check
   before treating it as itself prior art.
+- **Riley, Debray, Collins, Archer, Ensor, van Smeden & Snell**,
+  "Minimum sample size for external validation of a clinical prediction
+  model with a binary outcome," *Statistics in Medicine* 40(19), 2021
+  ([DOI: 10.1002/sim.9025](https://onlinelibrary.wiley.com/doi/10.1002/sim.9025))
+  — the standard methodological reference for exactly the question this
+  document's calibration-set-size sweep asks empirically: how many
+  external-validation cases are needed to precisely estimate calibration.
+  Their finding that the calibration-slope criterion typically drives the
+  largest sample-size requirement (far more than a bare "100 events" rule
+  of thumb) is the same qualitative conclusion this document reaches by
+  resampling — that small calibration sets are unbiased on average but too
+  imprecise to trust — reached instead via closed-form/simulation sample-
+  size formulas rather than bootstrap resampling of an existing model's
+  scores. Not TB- or CXR-specific and not previously connected to this
+  project's calibration-set-size result; worth citing as the general
+  statistical grounding for that section, not discovered independently by
+  it — the empirical result here should be read as a case study consistent
+  with, not a replacement for, this more general methodology.
 - One more lead surfaced but **not verified**: a medRxiv preprint titled
   "Geographic Domain Shift Precipitates Divergent Failure Modes in Deep
   Learning–Based Tuberculosis Screening: A Multi-National External
