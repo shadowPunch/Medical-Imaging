@@ -30,8 +30,10 @@ confound before it found a real fix.**
 - Found a fix that actually works: **lung-crop + mild texture augmentation**
   gets TBX11K held-out sensitivity to **92.6% [90.3, 94.6] at 70%
   specificity** under a per-site threshold (`eval/ceiling_analysis.py`) —
-  clearing the WHO TPP bar for the first time, with a tight, non-overlapping
-  CI against every earlier configuration. An augmentation-strength sweep
+  meets the WHO TPP triage sensitivity/specificity targets on held-out TBX11K
+  (retrospective research split; no prospective or prevalence-adjusted
+  evaluation), with a tight, non-overlapping CI against every earlier
+  configuration. An augmentation-strength sweep
   (mild/medium/aggressive) confirmed the mechanism: too-aggressive texture
   randomization destroys real diagnostic texture (cavitation, nodules) along
   with the confound, and mild wins because it removes less signal overall
@@ -43,18 +45,94 @@ confound before it found a real fix.**
   worth reading in full before citing just the headline number, since
   several earlier configurations looked fine until checked harder.
 
-**Phase 3 — reconstruction head: not started; being scoped now.** DiffDRR
-pair generation + a back-projection reconstruction head + shape induction
-need a real CT dataset and cloud GPU (3D training exceeds the local 4GB
-card), neither available in this environment. Plan is to build and
-locally-smoke-test the pipeline (architecture, DiffDRR integration, training
-script, NRRD/NIfTI export, and the code-level guarantee from the proposal's
-§11a that Head B never feeds Head A's decision) and hand off actual training
-to a Colab notebook, mirroring `code/tb_diagnostic_colab.ipynb`'s existing
-pattern for Phase 1/2. No trained reconstruction exists yet.
+**Phase 3 — reconstruction head: pipeline built and verified end-to-end on
+real data; not trained to convergence.** `code/recon/`:
 
-**Nothing is committed to git.** `code/` and `datasets/` both have
-substantial uncommitted changes from this session — ask before committing.
+- `ct_data.py` — loads a real LIDC-IDRI DICOM series directly (DiffDRR reads
+  the directory with no manual conversion) and generates DRRs at random
+  poses. Verified: full-resolution volumes OOM the local 4GB card (>3.7GB);
+  resampling to ~2.5mm spacing (~128 voxels/axis) keeps DRR generation under
+  ~2GB, matching the proposal's §9 128³ target.
+- `models/recon_head.py` — `ReconHead`, a right-sized back-projection
+  network (2D feature -> channel-to-depth lift -> 3D conv decoder), 0.35M
+  params, DuoLift-CNN-*inspired* per §6, not a vendored copy of the
+  released code/weights. Wired into `TBDiagnosticModel` via
+  `build_model(..., with_recon=True)`.
+- `recon/firewall_test.py` — automated check of the §11a isolation
+  guarantee (value identity + gradient isolation, both directions). Passes.
+  This is enforced structurally (`forward()` never references
+  `self.recon_head`), not just documented.
+- `recon/train_recon.py` — paired DRR-supervised loss (real CT -> DRR ->
+  predicted volume -> compare to the CT's own density) plus unpaired shape
+  induction on real CXRs (Sizikova et al. — predicted volume re-projected
+  through DiffDRR, compared against the original input image; no CT ground
+  truth needed for this term). **Two real bugs found and fixed while
+  verifying this on real data, not synthetic placeholders:** (1) an
+  unconstrained final layer produced exactly-zero gradients through the
+  re-projection loss — CT density is physically non-negative and the
+  renderer degenerates on near-zero/negative input; fixed with `softplus`.
+  (2) a silent shape mismatch between `ReconHead`'s fixed volume_size cube
+  and each CT's actual (non-cubic) resampled geometry was scrambling the
+  renderer's ray indexing without erroring — caught via an identical loss
+  value across different random initializations, which shouldn't happen;
+  fixed by resizing the prediction to the canonical geometry before
+  substitution. After both fixes: real, non-zero gradients confirmed on both
+  loss terms, and shape-induction loss measurably decreases over a short
+  smoke run (2.22 → 0.78 over 8 steps).
+- `recon/export.py` — NRRD/NIfTI export via SimpleITK, each file tagged
+  "SYNTHESIZED" at the metadata level (belt-and-braces alongside the §11a
+  code-level guarantee, not a replacement for it).
+
+**Training run (completed).** Driven headlessly via the Kaggle CLI
+(`kaggle kernels push`), not the browser — `code/tb_phase3_kaggle.ipynb`,
+GPU T4, ~4 hours (06:12→10:20 UTC). Verified from the full run log, not
+assumed from a "COMPLETE" status alone:
+- 150/150 LIDC-IDRI CT series fetched, 0 failures.
+- 10,696 unpaired real CXRs available for the shape-induction term (this
+  confirms the `/kaggle/input/datasets/<owner>/<slug>/` mount-path fix
+  actually worked — the prior run silently found 0 and skipped the term
+  entirely).
+- 2000/2000 training steps completed, 0 errors/tracebacks in the entire log.
+- Paired DRR-supervision loss: 0.3782 → 0.1511 → 0.0789 (clean, substantial,
+  monotonic-ish decrease).
+- Shape-induction loss: 1.4689 → 0.6563 → 1.1237 (noisier, as expected for
+  an unpaired re-projection term, but consistently well below the ~2.0
+  uncorrelated-baseline ceiling).
+- Final export ran on a real held-out CXR (`s1559.png`), not a synthetic
+  fallback — confirms a genuine end-to-end real-data path, not just a
+  shape-check.
+
+This is a single run, not a validated model: no PSNR/SSIM/LPIPS against
+paired CT ground truth yet (§10's quantitative validation), no held-out
+generalization check, no hyperparameter search. It demonstrates the
+pipeline trains stably end-to-end on real data at real scale — it does not
+demonstrate reconstruction quality. Output artifacts
+(`phase3_recon/latest.pt`, `phase3_recon/sample_reconstruction.nrrd`) were
+produced on Kaggle; pulling them down via the CLI's `kernels output` proved
+impractical (unfiltered download pulls the redundant 11 GB DICOM input tree
+first, alphabetically ahead of the actual outputs, and rate-limits
+(HTTP 429) when paginating a filtered listing) — retrieve them from the
+Kaggle web UI's kernel output panel instead.
+
+Earlier runs on the way to this one (kept here since they surfaced real
+bugs, not because they're results to cite): a first pass crashed on
+`/kaggle/working` disk quota at `N_SERIES=400` (~29 GB projected against a
+~20 GB quota) — the real `OSError: [Errno 28] No space left on device` was
+masked by a confusing downstream nbconvert HTML-export failure until the
+full log was read; fixed by trimming to `N_SERIES=150` and adding an
+explicit disk-space guard. A second pass completed all steps but ran the
+shape-induction term over 0 CXRs due to the mount-path assumption above
+being wrong; fixed and is what produced the numbers reported here.
+
+**CT data.** `datasets/lidc-idri/dicom/` holds 150 real CT series (11 GB, 0
+failures) — fetched directly via TCIA's public REST API
+(`datasets/lidc-idri/fetch_dicom.py`), no desktop NBIA Data Retriever
+needed after all. See `datasets/lidc-idri/README.md`.
+
+**Git status.** `datasets/` is fully committed (including the LIDC-IDRI
+fetch work). `code/` has substantial uncommitted changes — the Stage 1
+follow-up work and everything in this Phase 3 section — ask before
+committing.
 
 ---
 
@@ -379,8 +457,8 @@ pervasive acquisition/processing signature and genuine habitus correlation.
 different positive/negative collection contexts has been noted in prior TB
 CXR literature — this should be positioned as a known confound quantified
 precisely (first measurement of how much in-domain AUC survives complete
-lung removal, plus the region breakdown), not as a novel discovery, pending
-an actual literature check before any writeup.
+lung removal, plus the region breakdown), not as a novel discovery. See
+**Literature check** below — done, not pending.
 
 **Label-shuffle control** — permute training-set labels only
 (`train_diagnostic.py --shuffle-labels`, val/held-out stay real), rerun the
@@ -563,17 +641,26 @@ Corrected below.
 | No intervention (full frame) | 78.5% [75.4, 81.6] | 0.933 |
 | Lung-crop + in-mask CLAHE (confounded Step 1) | 70.9% [67.3, 74.5] — regression | not tested |
 | **Lung-crop only, no CLAHE (clean reference)** | **84.4% [81.0, 87.1]** | n/a — crop removes the complement concept |
-| Lung-crop + texture-aug, **mild** | **92.6% [90.3, 94.6]** | **0.893** |
+| Lung-crop + texture-aug, **mild** | **92.6% [90.3, 94.6]** | 0.893* |
 | Lung-crop + texture-aug, medium | 89.5% [86.8, 91.8] | not tested |
 | Lung-crop + texture-aug, aggressive | 88.3% [85.6, 90.9] | not tested |
+
+*The 0.893 complement-AUC in the mild row is texture-aug **alone** (no
+crop) — the number that was already available when this table was built.
+The complement-AUC for the actual winning config (crop **+** mild-aug
+combined) required a new run and is reported separately below, with a
+caveat the aug-alone number doesn't need.
 
 **Clean lung-crop alone is a real, substantial win on TBX11K** (78.5% →
 84.4%) — confirming the earlier CLAHE result wasn't just "crop doesn't help
 here," it was specifically CLAHE actively hurting. **Mild texture
 augmentation on top pushes the ceiling to 92.6% [90.3, 94.6] — the entire CI
-clears the 90% WHO-TPP sensitivity target for the first time this session,**
-with zero overlap against the clean baseline's CI. This is not Montgomery-
-sized noise; at this N the separation is real.
+meets the WHO TPP triage sensitivity/specificity targets on held-out TBX11K
+(retrospective research split; no prospective or prevalence-adjusted
+evaluation), for the first time this session,** with zero overlap against
+the clean baseline's CI. This is not Montgomery-sized noise; at this N the
+separation is real. (This is one direction, on one held-out source, selected
+by a sweep run on that same held-out set — see Limitations below.)
 
 The strength sweep confirms the exact mechanism predicted: TB findings
 (cavitation, miliary nodules, reticulonodular infiltrate) are themselves
@@ -598,6 +685,42 @@ a complement-AUC drop; they disagree about how much of the *held-out* gain
 is trustworthy. Mild aug's result — complement-AUC barely moved (0.933→0.893)
 while held-out ceiling jumped 8+ points — favors the first reading here,
 but this should be treated as evidence, not proof, until replicated.
+
+**Montgomery direction at the winning config (confirmatory).** The 92.6%
+result above is one direction only (Shenzhen+Montgomery trained → held-out
+TBX11K). Running the identical recipe (lung-crop + mild-aug) in the reverse
+direction, Shenzhen+TBX11K trained → held-out Montgomery:
+
+| | Val AUC | Held-out AUC | Frozen-threshold sens/spec | Ceiling sens@70 (95% CI) |
+|---|---|---|---|---|
+| No intervention (baseline) | 0.997 | 0.580 | 37.9% / 82.5% | 44.8% [31.5, 61.5] |
+| **Winning config (crop + mild-aug)** | 0.994 | 0.796 | 53.4% / 97.5% | **75.9% [65.4, 87.0]** |
+
+Same direction of effect as TBX11K, and — despite Montgomery's usual
+resolution limits — this particular jump (44.8→75.9) is large enough that
+the two CIs don't actually overlap (baseline tops out at 61.5, winning
+config starts at 65.4). Read as confirmatory: the fix helps in both
+directions, magnitude uncertain in this one but the effect itself is not
+plausibly just noise here.
+
+**Complement-AUC for the actual winning config (crop + mild-aug combined,
+not aug alone).** Training Shenzhen-only with the full winning recipe
+(`--lung-crop --texture-aug --aug-strength mild`) and scoring it against the
++25px-dilated complement (`eval/complement_monitor.py
+--complement-variant lungcomplement_d25`): **0.634** — the lowest
+complement-AUC measured all session, well below aug-alone's 0.893 and much
+closer to the label-shuffle control's ~0.5 floor than to the 0.933 baseline.
+
+**Caveat this number needs that the others didn't:** this checkpoint was
+*trained* on lung-crop images (tight, zoomed lung-only crops) and *scored*
+on full-frame complement images (wide field of view, lungs blanked) — a
+real distribution shift in framing and scale, not just content. Some of the
+0.634 is very likely the model simply not knowing what to do with an
+input shape it never trained on, stacked on top of any genuine confound
+reduction. This number is a *ceiling* on how much confound-reliance could
+be claimed as removed, not a clean isolated measurement of it the way the
+full-frame-vs-full-frame comparisons (0.933→0.893, aug alone) are. Treat it
+as suggestive, not as directly comparable to the other rows in this section.
 
 ### CXR-pretrained encoder (DenseNet-121, torchxrayvision)
 
@@ -664,9 +787,118 @@ lung-crop + mild-aug already captured.
 **Not yet run:** source-adversarial training (DANN) — deliberately last, per
 the plan, since it's unstable and easy to fool without the complement-AUC
 check already in place to verify it isn't just satisfied superficially. Given
-Steps 1-4 already found a configuration that clears the 90% ceiling with
-tight CIs, DANN's expected marginal value from here is low; worth treating as
-optional rather than required to complete this intervention plan.
+Steps 1-4 already found a configuration that meets the WHO TPP sensitivity
+target on held-out TBX11K (retrospectively, with tight CIs), DANN's expected
+marginal value from here is low; worth treating as optional rather than
+required to complete this intervention plan.
+
+---
+
+## Limitations
+
+The headline result — lung-crop + mild texture augmentation meets the WHO
+TPP triage sensitivity/specificity targets on held-out TBX11K (retrospective
+research split; no prospective or prevalence-adjusted evaluation) — is real
+but narrower than it can sound quoted alone:
+
+- **Single-direction strength.** The 92.6% [90.3, 94.6] result is one
+  direction only — Shenzhen + Montgomery trained, TBX11K held out. The
+  reverse direction (Shenzhen + TBX11K trained, Montgomery held out) is
+  reported separately above with much wider CIs; it is confirmatory (same
+  direction of effect) but structurally cannot match this precision. Treat
+  the strong claim as belonging to one direction, not to the pipeline in
+  general.
+- **No untouched holdout remains.** All three sources (Shenzhen, Montgomery,
+  TBX11K) informed tuning decisions somewhere in this process — which source
+  to hold out, the augmentation-strength sweep, the lung-crop margin/dilation
+  — even though the *final* reported number for each configuration was
+  scored on data that configuration's own training never saw. There is no
+  fourth, fully naive source left to confirm the winning recipe generalizes
+  to a TB CXR set nobody has looked at yet.
+- **The augmentation-strength sweep selected mild on the same TBX11K
+  held-out set it's being reported against.** Three configurations (mild/
+  medium/aggressive) were compared on TBX11K sens@spec70 and the best was
+  kept — that TBX11K number is a selection-optimized result, not an
+  independent confirmation. The complement-AUC checks (measured on Shenzhen,
+  not TBX11K) are the closer-to-independent evidence that mild's mechanism
+  is real rather than a lucky draw among three.
+- **Montgomery structurally cannot resolve differences below ~15 points.**
+  With ~58 positives, its bootstrap CIs run ±13-15 points — most Montgomery
+  comparisons in this document are consistent with "no detectable
+  difference" even where point estimates move substantially, and should be
+  read for direction of effect only, never magnitude. The one exception is
+  the winning-config comparison (44.8% [31.5, 61.5] → 75.9% [65.4, 87.0]),
+  where the jump happens to be large enough that the CIs don't overlap —
+  still treat this as a smaller-N result than the TBX11K number, not as
+  equally precise.
+- **Residual complement AUC.** The winning configuration's complement-AUC
+  (in-domain, Shenzhen, lung-crop + mild-aug combined, scored against the
+  +25px-dilated complement) is **0.634** — real progress from the 0.933
+  baseline, but nowhere near the label-shuffle control's ~0.5 floor. Some
+  acquisition-texture reliance survives the fix; the honest claim is
+  "substantially reduced," not "eliminated." This particular number also
+  carries a distribution-shift caveat (crop-trained model scored on
+  full-frame input) not shared by the other complement-AUC figures in this
+  document — see the Phase 2 validation results section for the full
+  caveat before quoting 0.634 on its own.
+
+---
+
+## Literature check
+
+A targeted (not exhaustive — a handful of searches, not a systematic
+review) check for prior work on Shenzhen/Montgomery confounding, shortcut
+learning in CXR classifiers, and cross-institution TB screening
+generalization, done before any writeup claims novelty.
+
+**The phenomenon is known, not novel:**
+- **FairALM** (Lokhande, Akash, Ravi & Singh, ECCV 2020, [arXiv:2004.01355](https://arxiv.org/abs/2004.01355))
+  trains a TB classifier on exactly Shenzhen + Montgomery and explicitly
+  treats *site* (which hospital) as a nuisance variable to decorrelate from
+  the label, for precisely the reason this project's audit chain found: "a
+  model may cheat and use site-specific (rather than disease-specific)
+  artifacts in the images for prediction." Same two datasets, same
+  underlying concern, five years earlier — the confound's *existence* is
+  prior art.
+- **DeGrave et al.**, "AI for radiographic COVID-19 detection selects
+  shortcuts over signal," *Nature Machine Intelligence* 2021
+  ([PMC7523163](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7523163/)) —
+  the landmark CXR shortcut-learning paper. Different disease (COVID, not
+  TB) and a different method (saliency maps / Expected Gradients, not a
+  direct ablation), but the same structural finding: models reading
+  non-lung regions (lead markers) rather than pathology, appearing accurate
+  in-distribution and failing at new sites.
+- **Rafferty & Rajan**, "Limitations of Public Chest Radiography Datasets
+  for Artificial Intelligence," arXiv 2509.15107 (2026) — a recent survey
+  that names border/corner/marker/scanner-artifact shortcuts as a known,
+  general limitation of public CXR datasets.
+- One more lead surfaced but **not verified**: a medRxiv preprint titled
+  "Geographic Domain Shift Precipitates Divergent Failure Modes in Deep
+  Learning–Based Tuberculosis Screening: A Multi-National External
+  Validation Study" looks directly on-point (TB screening + cross-site
+  failure modes) but its PDF wouldn't parse through the fetch tool used
+  here — worth tracking down properly before citing, not worth citing on a
+  title alone.
+
+**What doesn't appear to have direct precedent** (in what this check
+found — a real literature review before submission would need to confirm
+this more thoroughly than a handful of searches can): a direct causal
+ablation that trains and scores a model with the *entire* lung field
+removed and reports the surviving AUC as a number, cross-checked with a
+mask-dilation robustness control, a region-by-region decomposition
+(shoulders/spine/diaphragm/corners via actual organ segmentation), a
+fixed-location patch test, a high-pass residual test, and a label-shuffle
+negative control, specifically on Shenzhen/Montgomery/TBX11K. FairALM
+addresses the confound by training around it without quantifying its raw
+magnitude; DeGrave's saliency-based method is indirect (saliency maps have
+well-documented reliability problems of their own) rather than a direct
+"how much survives with the diagnostic region completely gone" measurement.
+
+**Honest positioning:** known confound, quantified more precisely and with
+a more direct, convergent evidence chain than the prior work found here —
+not a novel discovery. Write it up as replication-plus-quantification-
+plus-fix, cite FairALM and DeGrave as the closest prior art, and track down
+the medRxiv lead properly before final submission.
 
 ---
 

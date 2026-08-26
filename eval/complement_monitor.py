@@ -40,14 +40,16 @@ def main() -> None:
     parser.add_argument("--shenzhen",   type=str, default=None)
     parser.add_argument("--montgomery", type=str, default=None)
     parser.add_argument("--backbone",   type=str, default="efficientnet_b0")
+    parser.add_argument("--complement-variant", type=str, default="lungcomplement",
+                        help="e.g. lungcomplement_d25 for the +25px dilated complement")
     parser.add_argument("--image-size", type=int, default=320)
     parser.add_argument("--batch-size", type=int, default=16)
     args = parser.parse_args()
     args.tbx11k = None
     args.held_out = "none"
 
-    _, val_s, _ = build_splits(args, DataConfig(), variant="lungcomplement")
-    print(f"In-domain val split (complement variant): {len(val_s)} samples")
+    _, val_s, _ = build_splits(args, DataConfig(), variant=args.complement_variant)
+    print(f"In-domain val split ({args.complement_variant}): {len(val_s)} samples")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(args.backbone, pretrained=False).to(device)
@@ -67,8 +69,10 @@ def main() -> None:
     y_prob = np.concatenate(all_probs)
     y_true = np.concatenate(all_labels)
     auc = compute_auc(y_true, y_prob)
-    print(f"\nIn-domain complement-AUC (lungs blanked, same val split): {auc:.4f}")
-    print("  Reference (no intervention, code/readme.md): Shenzhen-only 0.933")
+    print(f"\nIn-domain complement-AUC ({args.complement_variant}, same val split): {auc:.4f}")
+    print("  Reference points (code/readme.md, Shenzhen-only): "
+          "no intervention 0.933 (margin-only) / 0.951 (+25px dilated); "
+          "mild-aug full-frame 0.893")
 
 
 if __name__ == "__main__":

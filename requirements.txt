@@ -10,3 +10,8 @@ tqdm>=4.66.0
 pandas>=2.0.0
 torchxrayvision>=1.2.0
 albumentations>=1.4.0
+
+# Phase 3 — reconstruction head
+diffdrr>=0.6.0
+pydicom>=2.4.0
+SimpleITK>=2.3.0
