@@ -111,13 +111,19 @@ This is a single run, not a validated model: no PSNR/SSIM/LPIPS against
 paired CT ground truth yet (§10's quantitative validation), no held-out
 generalization check, no hyperparameter search. It demonstrates the
 pipeline trains stably end-to-end on real data at real scale — it does not
-demonstrate reconstruction quality. Output artifacts
-(`phase3_recon/latest.pt`, `phase3_recon/sample_reconstruction.nrrd`) were
-produced on Kaggle; pulling them down via the CLI's `kernels output` proved
-impractical (unfiltered download pulls the redundant 11 GB DICOM input tree
-first, alphabetically ahead of the actual outputs, and rate-limits
-(HTTP 429) when paginating a filtered listing) — retrieve them from the
-Kaggle web UI's kernel output panel instead.
+demonstrate reconstruction quality. Output artifacts pulled down to
+`outputs/phase3_recon/` (gitignored, like every other checkpoint dir) and
+inspected directly, not just trusted from the log: `latest.pt` is a real
+386-key model state dict at step 2000/2000; `sample_reconstruction.nrrd` is
+a 128×128×128 float32 volume at 2.5mm spacing (matches training config),
+values in [0.096, 4.09] — non-degenerate, not all-zero or NaN — with the
+`SYNTHESIZED` safety tag intact. An unfiltered `kernels output` pull is
+impractical here (it lists the redundant 11 GB DICOM input tree first,
+alphabetically ahead of the actual outputs, and rate-limits (HTTP 429)
+paginating at the CLI's default page size of 20) — fixed by filtering to
+`phase3_recon/.*` and raising `--page-size` to its max (200), which cut the
+number of listing calls enough to avoid the rate limit; download completed
+in under a minute once that was in place.
 
 Earlier runs on the way to this one (kept here since they surfaced real
 bugs, not because they're results to cite): a first pass crashed on
