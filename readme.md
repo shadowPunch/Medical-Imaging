@@ -37,8 +37,14 @@ confound before it found a real fix.**
   number** — a threshold frozen from validation instead of TBX11K itself
   (`eval/frozen_threshold_check.py`) gives 98.2% sensitivity but only 44.0%
   specificity on TBX11K, well below the 70% floor; per-site threshold
-  recalibration is required to actually realize 92.6%, not optional. An
-  augmentation-strength sweep
+  recalibration is required to actually realize 92.6%, not optional. Traced
+  the mechanism (`eval/score_distribution_diagnosis.py`): not a uniform
+  prevalence shift, but an 8×-wider negative-class score spread on TBX11K
+  while positives barely move — and turned the recalibration requirement
+  into a concrete number via a calibration-set-size sweep: **≈250–300
+  labeled cases from the target site to hit the 70% specificity target
+  within ±5 points at ≥90% confidence**; below ~100 cases, calibration is
+  closer to noise than correction. An augmentation-strength sweep
   (mild/medium/aggressive) confirmed the mechanism: too-aggressive texture
   randomization destroys real diagnostic texture (cavitation, nodules) along
   with the confound, and mild wins because it removes less signal overall
@@ -210,10 +216,13 @@ code/
 ├── eval/
 │   ├── metrics.py            — AUC, WHO TPP operating point, frozen-threshold eval, bootstrap CI, sens@spec ceiling
 │   ├── ceiling_analysis.py   — Sens @ spec≥70% from an existing checkpoint — no retraining
+│   ├── frozen_threshold_check.py     — Val-frozen threshold scored on held-out — no retraining
+│   ├── score_distribution_diagnosis.py — Val-vs-held-out score histograms + calibration-set-size sweep — no retraining
 │   ├── projection_probe.py   — Does in-domain AUC ride on a linear source direction?
 │   ├── histogram_probe.py    — Spatially-blind intensity-histogram probe
 │   ├── shortcut_baseline.py  — Source-classifier shortcut-detector baseline
 │   └── complement_monitor.py — Standing in-domain confound diagnostic for any intervention
+├── figures/               — Diagnostic plots referenced from this readme (tracked; regenerate via the eval/ scripts above, not hand-edited)
 └── utils/
     ├── gradcam.py        — Grad-CAM + heatmap overlay
     └── lung_mask.py      — Pretrained lung-field segmentation (torchxrayvision)
@@ -703,6 +712,82 @@ thresholds transfer sensitivity far better than specificity across sources)
 — it is a property of frozen cross-source thresholds on these datasets, not
 something lung-crop + mild-aug was ever positioned to fix.
 
+**Mechanism (`eval/score_distribution_diagnosis.py`, same checkpoint, no
+retraining) — not a uniform prevalence shift, specifically a negative-class
+spread problem.** Score histograms, split by label, val vs. held-out:
+
+![Score distributions: validation vs. held-out TBX11K, split by label](figures/tbx11k_winning_score_histograms.png)
+
+Quantified via per-class median offset and IQR ratio (held-out IQR / val
+IQR):
+
+| | median offset (held − val) | IQR ratio (spread) |
+|---|---|---|
+| Negative | +0.126 | **7.94×** |
+| Positive | +0.004 | 0.36× |
+
+If this were a "wholesale" shift from prevalence/class-balance differences,
+both classes would shift by a similar amount and keep roughly their shape.
+That is not what happens: **positives barely move and if anything get
+tighter** (offset ≈0, IQR shrinks to 0.36×) — the model is *more* consistent
+on TBX11K positives than on validation positives, consistent with the very
+high, stable frozen-threshold sensitivity (98.2%). **Negatives are the
+problem**: val negatives are tightly clustered near 0 (median 0.047, IQR
+0.085) — an easy population, mostly Shenzhen/Montgomery normals — while
+TBX11K negatives spread across nearly the full [0, 1] range (median 0.173,
+IQR 0.675, visible as the long right tail in the lower panel above). A
+threshold calibrated against the tight validation-negative cluster sits
+well inside that tail, misclassifying a large fraction of TBX11K negatives
+as positive — exactly the 44% specificity collapse. The likely source is
+the same acquisition/population heterogeneity this document already
+established as a confound (TBX11K's negative population is far more
+diverse — different scanners, patient populations, and non-TB abnormal
+findings mixed into "negative" — than Shenzhen/Montgomery's comparatively
+homogeneous normal set), now showing up specifically as inflated
+negative-class score variance rather than a shared shift. This refines,
+not just confirms, the mechanism guess — the fix this points to is a
+threshold calibrated against a **sample of the target site's actual
+negative population**, not a uniform correction.
+
+**Deployment spec: how many labeled cases does a new site need
+(`eval/score_distribution_diagnosis.py`'s calibration-set-size sweep,
+same checkpoint, no retraining)?** For calibration sizes n ∈ {25, 50, 100,
+150, 200, 300, 400, 500}: draw n cases at random from held-out TBX11K
+(true prevalence, not rebalanced), set a threshold at the 70th percentile
+of that draw's negative scores, apply it to the remaining TBX11K cases, and
+record the achieved specificity there. Repeated 500× per size:
+
+![Achieved specificity vs. calibration set size, with 10th-90th percentile band](figures/tbx11k_winning_calibration_size_sweep.png)
+
+| n (labeled cases) | mean achieved spec | 10th–90th pct | P(within ±5pt of 70%) |
+|---|---|---|---|
+| 25 | 68.6% | [57.4%, 79.1%] | 42.8% |
+| 50 | 68.9% | [60.0%, 77.0%] | 55.4% |
+| 100 | 69.2% | [62.9%, 75.2%] | 69.8% |
+| 150 | 69.5% | [64.7%, 74.3%] | 82.6% |
+| 200 | 69.8% | [65.6%, 73.6%] | 88.8% |
+| 300 | 69.9% | [66.3%, 73.5%] | 91.8% |
+| 400 | 70.0% | [66.9%, 72.8%] | 96.6% |
+| 500 | 69.9% | [66.9%, 72.8%] | 98.0% |
+
+(One canonical run shown, matching the saved plot; the held-out `DataLoader`
+isn't seed-pinned for shuffling, so a rerun lands within ~1-2 points of
+these per size — the trend and the ≈250-300 conclusion below are stable
+across reruns, only the last digit moves.) **The mean is essentially
+unbiased even at n=25** —
+small calibration sets aren't systematically wrong on average — but the
+*spread* is what makes small sets unusable: at n=25 there's roughly a
+1-in-2 chance of landing more than 5 points from target in either
+direction, which given the confidence-interval width could mean shipping a
+site at 55% specificity while believing it's at 70%. **Concrete deployment
+spec: ≈250–300 labeled cases (majority negative, drawn from the target
+site's actual population, not rebalanced) to land within ±5 points of the
+70% specificity target with ≥90% confidence.** Below ~100 cases, per-site
+calibration is closer to noise than correction. This is cheap to state now
+because the mechanism above says why: enough of the target site's *negative*
+population needs to be sampled to characterize its spread, not just its
+mean.
+
 The strength sweep confirms the exact mechanism predicted: TB findings
 (cavitation, miliary nodules, reticulonodular infiltrate) are themselves
 high-frequency texture, so aggressive randomization of sharpening/noise/
@@ -857,7 +942,14 @@ but narrower than it can sound quoted alone:
   pre-lung-crop baseline). Quoting 92.6% as "this model meets WHO TPP"
   without the per-site-recalibration caveat overstates what was
   demonstrated; see the Phase 2 validation results section for the full
-  frozen-threshold-vs-ceiling table.
+  frozen-threshold-vs-ceiling table. The mechanism is not a uniform
+  prevalence shift — it's specifically an 8×-wider negative-class score
+  spread on TBX11K (positives barely move) — and the recalibration this
+  implies has a concrete cost: ≈250–300 labeled cases from the target
+  site's own population to land within ±5 points of the 70% specificity
+  target with ≥90% confidence (`eval/score_distribution_diagnosis.py`);
+  below ~100 cases, per-site calibration is closer to noise than
+  correction.
 - **Single-direction strength.** The 92.6% [90.3, 94.6] result is one
   direction only — Shenzhen + Montgomery trained, TBX11K held out. The
   reverse direction (Shenzhen + TBX11K trained, Montgomery held out) is
