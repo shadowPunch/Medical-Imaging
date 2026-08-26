@@ -93,22 +93,28 @@ def describe_shift(val_probs, val_y, held_probs, held_y):
 
 
 def calibration_size_sweep(held_probs, held_y, sizes, n_repeats, target_spec, seed=42):
+    """
+    Sizes are counts of *negatives*, not total cases — positives contribute
+    nothing to placing a spec-target threshold (it's a percentile of the
+    negative score distribution), so a calibration set's binding resource is
+    how many negatives it contains, not its total size.
+    """
     rng = np.random.default_rng(seed)
-    n = len(held_y)
+    neg_idx_all = np.where(held_y == 0)[0]
+    n_neg = len(neg_idx_all)
     results = {}
     for size in sizes:
+        if size >= n_neg:
+            continue
         achieved = []
         for _ in range(n_repeats):
-            cal_idx = rng.choice(n, size=size, replace=False)
-            cal_mask = np.zeros(n, dtype=bool)
-            cal_mask[cal_idx] = True
-            cal_probs, cal_y = held_probs[cal_mask], held_y[cal_mask]
+            cal_neg_idx = rng.choice(neg_idx_all, size=size, replace=False)
+            cal_mask = np.zeros(len(held_y), dtype=bool)
+            cal_mask[cal_neg_idx] = True
+            cal_neg_probs = held_probs[cal_mask]
             rem_probs, rem_y = held_probs[~cal_mask], held_y[~cal_mask]
 
-            cal_neg = cal_probs[cal_y == 0]
-            if len(cal_neg) < 5 or (rem_y == 0).sum() < 1:
-                continue
-            threshold = np.percentile(cal_neg, target_spec * 100)
+            threshold = np.percentile(cal_neg_probs, target_spec * 100)
             point = apply_threshold(rem_y, rem_probs, threshold)
             achieved.append(point["specificity"])
         results[size] = np.array(achieved)
@@ -129,7 +135,7 @@ def plot_calibration_sweep(results, target_spec, out_path):
     ax.set_xticks(sizes)
     ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: str(int(v))))
     ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-    ax.set_xlabel("calibration set size (labeled cases)")
+    ax.set_xlabel("calibration set size (labeled negatives)")
     ax.set_ylabel("achieved specificity on remainder")
     ax.set_title("Threshold-transfer reliability vs. calibration set size")
     ax.legend()
@@ -183,8 +189,13 @@ def main() -> None:
     print(f"Saved score histograms -> {hist_path}")
     describe_shift(val_probs, val_y, held_probs, held_y)
 
+    held_neg = held_probs[held_y == 0]
+    full_threshold = np.percentile(held_neg, args.target_spec * 100)
+    print(f"\nPooled held-out negative distribution's {args.target_spec:.0%}-percentile "
+          f"(the value a calibration set is trying to estimate): {full_threshold:.3f}")
+
     print(f"\n─── Calibration-set-size sweep (target spec={args.target_spec:.0%}, "
-          f"{args.n_repeats} repeats/size) ───")
+          f"{args.n_repeats} repeats/size, sizes are negative counts) ───")
     results = calibration_size_sweep(held_probs, held_y, args.cal_sizes, args.n_repeats, args.target_spec)
     for size in sorted(results.keys()):
         vals = results[size]

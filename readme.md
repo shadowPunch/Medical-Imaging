@@ -38,13 +38,16 @@ confound before it found a real fix.**
   (`eval/frozen_threshold_check.py`) gives 98.2% sensitivity but only 44.0%
   specificity on TBX11K, well below the 70% floor; per-site threshold
   recalibration is required to actually realize 92.6%, not optional. Traced
-  the mechanism (`eval/score_distribution_diagnosis.py`): not a uniform
-  prevalence shift, but an 8×-wider negative-class score spread on TBX11K
-  while positives barely move — and turned the recalibration requirement
-  into a concrete number via a calibration-set-size sweep: **≈250–300
-  labeled cases from the target site to hit the 70% specificity target
-  within ±5 points at ≥90% confidence**; below ~100 cases, calibration is
-  closer to noise than correction. An augmentation-strength sweep
+  the mechanism to a training-data gap, not just acquisition texture:
+  splitting TBX11K's held-out negatives by their own raw annotation
+  (`eval/negative_composition_probe.py`) found that `sick_but_non-tb` cases
+  score a median 0.722 (vs. `healthy`'s 0.055) — the model never learned to
+  place non-TB pathology because Shenzhen/Montgomery's training negatives
+  are almost entirely healthy. Turned the recalibration requirement into a
+  concrete number via a calibration-set-size sweep: **≈250–300 labeled
+  negatives from the target site to hit the 70% specificity target within
+  ±5 points at ≥90% confidence**; below ~100, calibration is closer to
+  noise than correction. An augmentation-strength sweep
   (mild/medium/aggressive) confirmed the mechanism: too-aggressive texture
   randomization destroys real diagnostic texture (cavitation, nodules) along
   with the confound, and mild wins because it removes less signal overall
@@ -218,6 +221,7 @@ code/
 │   ├── ceiling_analysis.py   — Sens @ spec≥70% from an existing checkpoint — no retraining
 │   ├── frozen_threshold_check.py     — Val-frozen threshold scored on held-out — no retraining
 │   ├── score_distribution_diagnosis.py — Val-vs-held-out score histograms + calibration-set-size sweep — no retraining
+│   ├── negative_composition_probe.py — Splits held-out negatives by raw annotation subgroup (healthy vs. sick_but_non-tb) — no retraining
 │   ├── projection_probe.py   — Does in-domain AUC ride on a linear source direction?
 │   ├── histogram_probe.py    — Spatially-blind intensity-histogram probe
 │   ├── shortcut_baseline.py  — Source-classifier shortcut-detector baseline
@@ -738,55 +742,136 @@ TBX11K negatives spread across nearly the full [0, 1] range (median 0.173,
 IQR 0.675, visible as the long right tail in the lower panel above). A
 threshold calibrated against the tight validation-negative cluster sits
 well inside that tail, misclassifying a large fraction of TBX11K negatives
-as positive — exactly the 44% specificity collapse. The likely source is
-the same acquisition/population heterogeneity this document already
-established as a confound (TBX11K's negative population is far more
-diverse — different scanners, patient populations, and non-TB abnormal
-findings mixed into "negative" — than Shenzhen/Montgomery's comparatively
-homogeneous normal set), now showing up specifically as inflated
-negative-class score variance rather than a shared shift. This refines,
-not just confirms, the mechanism guess — the fix this points to is a
-threshold calibrated against a **sample of the target site's actual
-negative population**, not a uniform correction.
+as positive — exactly the 44% specificity collapse. The composition check
+below tests, and confirms, the specific source.
 
-**Deployment spec: how many labeled cases does a new site need
-(`eval/score_distribution_diagnosis.py`'s calibration-set-size sweep,
-same checkpoint, no retraining)?** For calibration sizes n ∈ {25, 50, 100,
-150, 200, 300, 400, 500}: draw n cases at random from held-out TBX11K
-(true prevalence, not rebalanced), set a threshold at the 70th percentile
-of that draw's negative scores, apply it to the remaining TBX11K cases, and
-record the achieved specificity there. Repeated 500× per size:
+**Negative-class composition (`eval/negative_composition_probe.py`, same
+checkpoint, no retraining) — this is a training-data gap, not just
+acquisition texture.** TBX11K's raw annotations distinguish `healthy` from
+`sick_but_non-tb` within what this codebase (like most TB CXR benchmarks)
+collapses into a single negative class — Shenzhen and Montgomery's
+negatives, by contrast, are almost entirely `healthy`. If the model's
+training negatives never included sick-but-not-TB cases, it never learned
+where to place them, and they should land unpredictably high. Splitting
+TBX11K's held-out negatives by that raw tag and scoring each subgroup
+separately:
+
+![TBX11K negative-class scores by subgroup: healthy vs. sick_but_non-tb](figures/tbx11k_winning_negative_composition.png)
+
+| Subgroup | n | median score | IQR | % scoring > 0.5 |
+|---|---|---|---|---|
+| healthy | 3,800 | 0.055 | 0.069 | 1.6% |
+| sick_but_non-tb | 3,800 | **0.722** | 0.530 | **66.5%** |
+
+**Confirmed, and more sharply than expected.** `healthy` reproduces the
+tight validation-negative distribution almost exactly (median 0.055 vs.
+validation's 0.047). `sick_but_non-tb` is a different population entirely —
+median score 0.722, meaning the *typical* sick-but-not-TB case is scored
+as TB-positive, not just occasionally confused. Of the 2,588 TBX11K
+negatives scoring above 0.5 (the long tail visible in the earlier
+histogram), **97.6% are `sick_but_non-tb`** against a 50% base rate in the
+negative pool — the tail is almost entirely this one subgroup. The model
+learned "sick lung tissue" where it needed "TB-specific lung tissue,"
+because its training negatives (Shenzhen/Montgomery, overwhelmingly
+healthy) never taught it the difference. This is a known failure mode in
+real deployed TB CAD, not just this pipeline: an independent field study of
+a commercial CAD system (CAD4TB) in a TB prevalence survey found 46.7%
+(245/525) of CXRs it scored highly without confirmed TB had identifiable
+non-TB abnormalities (pleural disease, cardiomegaly, non-TB pneumonia,
+nodules) — Ngosa, Moonga, Shanaube et al., *BMC Infectious Diseases*, 2023.
+That study doesn't attribute its finding to training-data composition (it
+wasn't investigating that), so it corroborates the *phenomenon* — non-TB
+abnormal cases drawing high TB scores — not this document's specific
+*causal* claim about negative-class composition; the causal claim here
+rests on the subgroup-split experiment above, which is this codebase's own
+result.
+
+**Unlike the acquisition-texture confound, this is fixable at the source,
+not just calibratable around.** Per-site threshold recalibration (below)
+compensates for it operationally; the direct fix is including non-TB
+pathology in the training negative class so the model learns the
+distinction it's currently missing entirely. Worth trying before further
+calibration-side work, since it would compress the tail itself rather than
+work around it — not yet run.
+
+**Deployment spec: how many labeled *negatives* does a new site need
+(`eval/score_distribution_diagnosis.py`'s calibration-set-size sweep, same
+checkpoint, no retraining)?** Positives contribute nothing to placing a
+spec-target threshold — it's a percentile of the negative score
+distribution alone — so the sweep is parametrized directly by negative
+count, not total calibration-set size. For n ∈ {25, 50, 100, 150, 200, 300,
+400, 500} negatives: draw n negatives at random from held-out TBX11K, set
+the threshold at their 70th percentile, apply it to the rest of the
+held-out set (both classes), and record the achieved specificity there.
+Repeated 500× per size:
 
 ![Achieved specificity vs. calibration set size, with 10th-90th percentile band](figures/tbx11k_winning_calibration_size_sweep.png)
 
-| n (labeled cases) | mean achieved spec | 10th–90th pct | P(within ±5pt of 70%) |
+| n (labeled negatives) | mean achieved spec | 10th–90th pct | P(within ±5pt of 70%) |
 |---|---|---|---|
-| 25 | 68.6% | [57.4%, 79.1%] | 42.8% |
-| 50 | 68.9% | [60.0%, 77.0%] | 55.4% |
-| 100 | 69.2% | [62.9%, 75.2%] | 69.8% |
-| 150 | 69.5% | [64.7%, 74.3%] | 82.6% |
-| 200 | 69.8% | [65.6%, 73.6%] | 88.8% |
-| 300 | 69.9% | [66.3%, 73.5%] | 91.8% |
-| 400 | 70.0% | [66.9%, 72.8%] | 96.6% |
-| 500 | 69.9% | [66.9%, 72.8%] | 98.0% |
+| 25 | 68.4% | [56.1%, 79.5%] | 41.6% |
+| 50 | 69.3% | [61.2%, 77.6%] | 57.0% |
+| 100 | 69.7% | [63.6%, 75.5%] | 72.0% |
+| 150 | 69.7% | [64.6%, 74.3%] | 80.2% |
+| 200 | 69.9% | [65.8%, 73.9%] | 87.2% |
+| 300 | 70.0% | [66.2%, 73.5%] | 93.4% |
+| 400 | 70.0% | [66.7%, 72.8%] | 96.4% |
+| 500 | 70.1% | [67.3%, 73.1%] | 98.8% |
 
 (One canonical run shown, matching the saved plot; the held-out `DataLoader`
 isn't seed-pinned for shuffling, so a rerun lands within ~1-2 points of
 these per size — the trend and the ≈250-300 conclusion below are stable
-across reruns, only the last digit moves.) **The mean is essentially
-unbiased even at n=25** —
-small calibration sets aren't systematically wrong on average — but the
-*spread* is what makes small sets unusable: at n=25 there's roughly a
-1-in-2 chance of landing more than 5 points from target in either
-direction, which given the confidence-interval width could mean shipping a
-site at 55% specificity while believing it's at 70%. **Concrete deployment
-spec: ≈250–300 labeled cases (majority negative, drawn from the target
-site's actual population, not rebalanced) to land within ±5 points of the
-70% specificity target with ≥90% confidence.** Below ~100 cases, per-site
-calibration is closer to noise than correction. This is cheap to state now
-because the mechanism above says why: enough of the target site's *negative*
-population needs to be sampled to characterize its spread, not just its
-mean.
+across reruns, only the last digit moves. TBX11K's own negative fraction
+happens to be 92.0% (7,600/8,260), so on *this* dataset a random
+total-case draw is already negative-dominated and the total-vs-negative
+distinction barely moves the numbers — but the negative-count framing is
+the correct one to report, since it is what is actually binding, and a
+real deployment site's case mix won't necessarily match TBX11K's curated
+composition.) **The mean is essentially unbiased even at n=25** — small
+calibration sets aren't systematically wrong on average — but the *spread*
+is what makes small sets unusable: at n=25 there's roughly a 1-in-2 chance
+of landing more than 5 points from target in either direction, which given
+the confidence-interval width could mean shipping a site at 56% specificity
+while believing it's at 70%.
+
+**Why the spread is this large: the threshold sits in a sparse valley
+between two subpopulations, not just "a tail."** The pooled held-out
+negative distribution's 70th percentile — the value a calibration set is
+trying to estimate — is **0.607**. Given the composition split above,
+that value sits almost exactly between the `healthy` cluster (98.4% of
+mass below 0.5) and the `sick_but_non-tb` cluster (median 0.722, the
+majority above 0.5): a bimodal mixture with a low-density valley in
+between. Order-statistic theory says a sample quantile's variance scales
+inversely with the local density at that quantile — flat, low-density
+regions make small-sample quantile estimates noisy even when the mean of
+the same data would be stable, which is exactly the asymmetry observed
+here (unbiased means, wide spreads, even at n=25). The bimodality found in
+the composition check isn't just an explanation for *why* the frozen
+threshold fails — it's also why *calibrating* that threshold from a small
+sample is intrinsically harder than a unimodal negative distribution would
+be: the 70th percentile falls precisely in the region a small sample is
+least likely to characterize well.
+
+**Concrete deployment spec: ≈250–300 labeled negatives, drawn from the
+target site's own population (not rebalanced), to land within ±5 points of
+the 70% specificity target with ≥90% confidence.** Below ~100, per-site
+calibration is closer to noise than correction. This is now grounded in
+both an empirical sweep and the mechanism that explains its shape, not
+just an empirical curve read off a plot.
+
+**Where this leaves the headline claim — three parts, each now evidenced
+separately, not asserted together:**
+1. Discrimination meets the WHO TPP triage bar on held-out TBX11K, under a
+   per-site-recalibrated threshold (the 92.6% ceiling).
+2. A frozen global threshold does not transfer (44.0% specificity), and the
+   mechanism is a training-data gap in negative-class composition — TBX11K
+   includes sick-but-non-TB negatives the training sources never did — not
+   a uniform distributional offset.
+3. Deployment therefore requires roughly 250–300 site-specific labeled
+   negatives to recalibrate reliably; below ~100, calibration doesn't help.
+
+Reading any one part as the whole story overclaims; reading all three
+together is what this pipeline currently supports.
 
 The strength sweep confirms the exact mechanism predicted: TB findings
 (cavitation, miliary nodules, reticulonodular infiltrate) are themselves
@@ -942,14 +1027,19 @@ but narrower than it can sound quoted alone:
   pre-lung-crop baseline). Quoting 92.6% as "this model meets WHO TPP"
   without the per-site-recalibration caveat overstates what was
   demonstrated; see the Phase 2 validation results section for the full
-  frozen-threshold-vs-ceiling table. The mechanism is not a uniform
-  prevalence shift — it's specifically an 8×-wider negative-class score
-  spread on TBX11K (positives barely move) — and the recalibration this
-  implies has a concrete cost: ≈250–300 labeled cases from the target
-  site's own population to land within ±5 points of the 70% specificity
-  target with ≥90% confidence (`eval/score_distribution_diagnosis.py`);
-  below ~100 cases, per-site calibration is closer to noise than
-  correction.
+  frozen-threshold-vs-ceiling table. **The mechanism is a training-data
+  gap, not just calibration:** TBX11K's negative class includes
+  sick-but-non-TB cases that Shenzhen/Montgomery's (overwhelmingly healthy)
+  training negatives never taught the model to place — confirmed directly
+  by splitting held-out negatives on their raw annotation (median score
+  0.722 for sick-but-non-TB vs. 0.055 for healthy, `eval/negative_composition_probe.py`).
+  Per-site recalibration compensates for this but doesn't fix it; the
+  direct fix (adding non-TB pathology to the training negative class) is
+  not yet run. The recalibration workaround has a concrete cost: ≈250–300
+  labeled *negatives* from the target site's own population to land within
+  ±5 points of the 70% specificity target with ≥90% confidence
+  (`eval/score_distribution_diagnosis.py`); below ~100, per-site
+  calibration is closer to noise than correction.
 - **Single-direction strength.** The 92.6% [90.3, 94.6] result is one
   direction only — Shenzhen + Montgomery trained, TBX11K held out. The
   reverse direction (Shenzhen + TBX11K trained, Montgomery held out) is
@@ -1021,6 +1111,21 @@ generalization, done before any writeup claims novelty.
   for Artificial Intelligence," arXiv 2509.15107 (2026) — a recent survey
   that names border/corner/marker/scanner-artifact shortcuts as a known,
   general limitation of public CXR datasets.
+- **Ngosa, Moonga, Shanaube et al.**, *BMC Infectious Diseases*, 2023
+  ([PMC10408069](https://pmc.ncbi.nlm.nih.gov/articles/PMC10408069/)) — in a
+  real TB prevalence survey, 46.7% (245/525) of CXRs a deployed commercial
+  CAD system (CAD4TB) scored highly without confirmed TB had identifiable
+  non-TB abnormalities (pleural disease, cardiomegaly, non-TB pneumonia,
+  nodules). This corroborates the *phenomenon* behind this document's
+  negative-class-composition finding (non-TB abnormal cases drawing high TB
+  scores) in an independent, real-world, non-training-focused study — but
+  the paper doesn't investigate or attribute a training-data-composition
+  cause, so it supports the phenomenon, not this document's specific causal
+  claim (that Shenzhen/Montgomery's near-exclusively-healthy training
+  negatives are why); that causal claim rests on this document's own
+  subgroup-split experiment (`eval/negative_composition_probe.py`,
+  Robustness interventions section) and would need its own literature check
+  before treating it as itself prior art.
 - One more lead surfaced but **not verified**: a medRxiv preprint titled
   "Geographic Domain Shift Precipitates Divergent Failure Modes in Deep
   Learning–Based Tuberculosis Screening: A Multi-National External
