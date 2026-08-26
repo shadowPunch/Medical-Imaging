@@ -67,7 +67,19 @@ def real_cxr_to_model_input(path: Path, image_size: int) -> torch.Tensor:
 
 
 def paired_step(model, ct_series: Path, image_size: int, volume_size: int,
-                device: torch.device) -> torch.Tensor:
+                device: torch.device, loss_fn: str = "mse") -> torch.Tensor:
+    """
+    loss_fn: 'mse' (original) or 'l1'. Real CT density is highly skewed —
+    roughly half the voxels are near-zero air/background — and plain MSE on
+    a target like that has a well-known failure mode: the safest way to
+    minimize squared error under uncertainty is a smoothed prediction near
+    the target's mean everywhere, not sparse structure matching the true
+    per-voxel values. L1 penalizes large errors less quadratically and is
+    known to produce sparser, less-regression-to-the-mean solutions on
+    skewed targets — testing whether that's actually what's happening here
+    (see code/readme.md's Phase 3 section for the diagnostic that motivated
+    this).
+    """
     subject = load_ct_volume(ct_series)
     drr = build_drr(subject, height=image_size, device=device)
     rot, trans = random_pose(device=device)
@@ -79,6 +91,8 @@ def paired_step(model, ct_series: Path, image_size: int, volume_size: int,
     target = subject.density.data.to(device).squeeze(0)  # torchio stores (1, D, H, W) -> (D, H, W)
     target = F.interpolate(target[None, None], size=(volume_size,) * 3,
                            mode="trilinear", align_corners=False)
+    if loss_fn == "l1":
+        return F.l1_loss(pred_volume, target)
     return F.mse_loss(pred_volume, target)
 
 
@@ -120,6 +134,14 @@ def main() -> None:
     parser.add_argument("--steps",      type=int, default=5)
     parser.add_argument("--lr",         type=float, default=1e-4)
     parser.add_argument("--shape-induction-weight", type=float, default=0.5)
+    parser.add_argument("--paired-loss", type=str, default="mse", choices=["mse", "l1"],
+                        help="See paired_step's docstring — testing whether L1 avoids the "
+                             "regression-to-the-mean-density behavior MSE showed on held-out CT.")
+    parser.add_argument("--diagnose-every", type=int, default=0,
+                        help="If >0, every N steps print the fraction of the current "
+                             "prediction's voxels below 0.02 density (target CT is ~50-60%% "
+                             "near-zero air/background; a healthy fit should trend toward that, "
+                             "not stay at 0%%).")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -155,7 +177,7 @@ def main() -> None:
         optimizer.zero_grad()
 
         loss_paired = paired_step(model, random.choice(ct_series), args.image_size,
-                                  args.volume_size, device)
+                                  args.volume_size, device, loss_fn=args.paired_loss)
         loss = loss_paired
         log = f"step {step}/{args.steps}  paired={loss_paired.item():.4f}"
 
@@ -168,6 +190,23 @@ def main() -> None:
         loss.backward()
         optimizer.step()
         print(log + f"  total={loss.item():.4f}")
+
+        if args.diagnose_every and step % args.diagnose_every == 0:
+            model.eval()
+            with torch.no_grad():
+                probe_subject = load_ct_volume(random.choice(ct_series))
+                probe_drr = build_drr(probe_subject, height=args.image_size, device=device)
+                probe_rot, probe_trans = random_pose(device=device, rotation_deg=0.0, translation_mm=0.0)
+                probe_img = probe_drr(probe_rot, probe_trans, parameterization="euler_angles", convention="ZXY")
+                probe_pred = model.forward_recon(drr_to_model_input(probe_img, args.image_size))
+                target_probe = F.interpolate(
+                    probe_subject.density.data.to(device)[None], size=(args.volume_size,) * 3,
+                    mode="trilinear", align_corners=False)
+            frac_zero_pred = (probe_pred < 0.02).float().mean().item()
+            frac_zero_target = (target_probe < 0.02).float().mean().item()
+            print(f"  [diagnostic] pred min={probe_pred.min().item():.4f} mean={probe_pred.mean().item():.4f} "
+                  f"frac<0.02={frac_zero_pred:.1%}   target frac<0.02={frac_zero_target:.1%}")
+            model.train()
 
     print("\nDone (smoke run — not trained to convergence; see recon/train_recon.py's docstring).")
 

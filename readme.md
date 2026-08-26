@@ -215,17 +215,54 @@ a z-score-normalized scale where 2.0 is the uncorrelated-random ceiling
 (established via the shape-induction loss analysis above) — the
 re-projected prediction retains real, non-trivial correlation with the
 input DRR's coarse shape, clearly better than chance, just not close
-enough to call it accurate. **Read together: the model learned something
-about coarse shape from the 2D input, but does not yet reconstruct
-voxel-accurate anatomy on CT it wasn't trained on.** This is likely a
-convergence/generalization gap rather than a broken pipeline — training
-loss on the 150 series it *did* see kept dropping smoothly to 0.079 (loss
-diagnosis above), so the model fits its training distribution; a single
-2000-step run with no held-out check during training and no
-hyperparameter search is a plausible place for that fit not to generalize
-yet. Next step if pursued: hold out CT series *during* training (not just
-for this post-hoc check), track PSNR/SSIM on that holdout across training,
-and use it to decide when to stop rather than only watching training loss.
+enough to call it accurate.
+
+**Mechanism check (local inference, no retraining) — this refines "not
+generalizing" into something more specific and more useful.** Inspected
+predicted-vs-target density directly on four held-out series. Real CT
+density is highly skewed: ~50–63% of voxels are near-zero air/background
+(`target frac<0.02`), with the rest forming the actual thoracic structure.
+The predicted volumes are never near-zero anywhere — **0% of predicted
+voxels fall below 0.02 on every series checked**, predicted mean sits at
+0.42–0.44 regardless of the target CT's own mean (0.075–0.099), and
+predictions from *different, unrelated* CT inputs correlate with each
+other at r=0.68–0.79. **Read together, this is not "hasn't converged
+yet" — it's the model predicting something close to a single averaged,
+input-invariant density blob, with a smaller amount of real per-input
+variation layered on top**, which is exactly what the projection-
+consistency result (real but weak) would look like if every DRR shares a
+similar coarse thoracic silhouette regardless of the actual patient. The
+"coarse shape prior" characterization above still holds, but the
+mechanism is sharper than "not enough training": plain MSE against a
+target that's mostly near-zero has a well-known failure mode where the
+loss-minimizing safe prediction is a smoothed value near the target's
+mean almost everywhere, rather than learning the sparse, patient-specific
+structure — the model may be sitting in exactly that local optimum rather
+than being partway to a better one.
+
+**Candidate fix prepared, not yet validated — the honest state of it.**
+Added an `--paired-loss {mse,l1}` option to `recon/train_recon.py`
+(`paired_step` now takes `loss_fn`) since L1 is the standard alternative
+for this exact failure mode — it penalizes large deviations less
+quadratically and is known to favor sparser solutions on skewed targets —
+plus a `--diagnose-every N` flag that prints the same near-zero-fraction
+check during training so this could be watched directly instead of
+inferred after the fact. **Tried to test this locally before spending
+more cloud GPU time on a hypothesis; the local test didn't produce a
+result.** At a reduced scale chosen to fit the 4 GB card
+(`--image-size 192 --volume-size 48`), the run showed 0% GPU utilization
+after 25+ minutes of wall time despite active CPU load — stuck on
+CT-loading/resampling I/O, not actually training — and was killed rather
+than left to run indefinitely on an unclear timeline. **So: the mechanism
+diagnosis above is solid (direct measurement, no training required to
+get it); the L1 fix is a well-motivated, ready-to-run candidate; whether
+it actually works is untested.** Confirming it needs either a working
+local repro (this machine didn't cooperate) or another Kaggle run —
+meaningful cloud GPU time, spent testing a hypothesis rather than a
+result. Also still worth doing regardless of the loss-function question:
+hold out CT series *during* training (not just this post-hoc check) and
+track the near-zero-fraction / PSNR on that holdout across training, so
+convergence is judged on evidence rather than training loss alone.
 
 **Does this clear §11a's threshold for shipping Head B as more than
 illustrative-only? There is no numeric threshold to clear — checked the
