@@ -94,6 +94,19 @@ def build_splits(args, cfg: DataConfig, variant: str = ""):
                 latent_as_positive=cfg.tbx11k_latent_as_positive,
                 exclude_tags=exclude,
             )
+            # Negative-count cap: subsamples the (post-exclude_tags) negative
+            # pool down to a fixed count, positives untouched. Composition
+            # ablations need this held constant across arms — otherwise
+            # "include the extra subgroup" also means "more training data",
+            # confounding composition with volume.
+            if args.tbx11k_neg_cap is not None:
+                rng_cap = np.random.default_rng(43)  # separate stream from the 85/15 rng below
+                pos = [s for s in tbx_train_pool if s[1] == 1]
+                neg = [s for s in tbx_train_pool if s[1] == 0]
+                if len(neg) > args.tbx11k_neg_cap:
+                    idx_cap = rng_cap.permutation(len(neg))[: args.tbx11k_neg_cap]
+                    neg = [neg[i] for i in idx_cap]
+                tbx_train_pool = pos + neg
             # 85/15 split, same pattern as Shenzhen/Montgomery above — needed
             # so a frozen threshold has a validation source even when this
             # is the only requested dataset (TBX11K-only ablations).
@@ -155,6 +168,12 @@ def main() -> None:
                              "held-out always keeps the full taxonomy. Negative-class-"
                              "composition ablation: does excluding a subgroup from training "
                              "hurt performance on that same subgroup at eval time.")
+    parser.add_argument("--tbx11k-neg-cap", type=int, default=None,
+                        help="Only with --held-out tbx11k-val: subsample the training "
+                             "negative pool (after --exclude-tbx11k-tag) down to this count. "
+                             "Matches training-set size across composition-ablation arms so "
+                             "a performance difference isn't confounded with a volume "
+                             "difference.")
     parser.add_argument("--output",    type=str, default="outputs/diagnostic")
     parser.add_argument("--backbone",  type=str, default="efficientnet_b0")
     parser.add_argument("--epochs",    type=int, default=50)

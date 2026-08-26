@@ -12,7 +12,10 @@ import numpy as np
 import SimpleITK as sitk
 import torch
 
-SYNTHESIZED_TAG = "SYNTHESIZED — not for measurement or diagnosis"
+SYNTHESIZED_TAG = (
+    "SYNTHESIZED — coarse shape prior, not a reconstruction of this "
+    "patient's anatomy. Not for measurement or diagnosis."
+)
 
 
 def _to_sitk_image(volume: torch.Tensor | np.ndarray, spacing_mm: float) -> sitk.Image:

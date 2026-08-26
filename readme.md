@@ -221,6 +221,38 @@ yet. Next step if pursued: hold out CT series *during* training (not just
 for this post-hoc check), track PSNR/SSIM on that holdout across training,
 and use it to decide when to stop rather than only watching training loss.
 
+**Does this clear §11a's threshold for shipping Head B as more than
+illustrative-only? There is no numeric threshold to clear — checked the
+proposal directly rather than assume.** §11a
+(`TB_CXR_Diagnostic_3D_Proposal.md`) states: *"Default: Phase 3 ships as an
+unvalidated visualization... enforced at the code level"* —
+unconditionally, not contingent on any metric. The PSNR/SSIM/LPIPS
+protocol is named an *"upgrade path, not a requirement"* (§11a) and §10
+specifies what that upgrade actually is: PSNR/SSIM/LPIPS **"on LIDC-IDRI
+against X2CT and DuoLift"** — a comparative benchmark against two named
+published methods, not a pass/fail number. No baseline reproduction of
+X2CT or DuoLift was attempted here, so that upgrade path was never taken,
+and there was never a bar for this run's numbers to clear or miss.
+**Picking a threshold now that these results happen to pass (or fail)
+would be exactly the retro-fitting §11a's code-level default was built to
+prevent — stating that plainly instead.**
+
+What the numbers *do* support, read against §11a's actual mechanism:
+Head B ships exactly as the proposal's unconditional default already
+specified — illustrative-only, structurally walled off from Head A's
+diagnostic path — and these results give no reason to claim anything
+stronger. Read narrowly, the honest framing per-metric is **a coarse
+shape prior, not a reconstruction of the patient's anatomy**: SSIM 0.245
+and LPIPS 0.595 on unseen CT indicate the model has learned thoracic
+silhouette and little finer structure, while the projection-consistency
+result (0.31 against a 2.0 uncorrelated-random ceiling) is the weakest
+thing a single-view method can produce and still be non-trivial — genuine
+signal, not noise, just not anatomy-accurate. Any UI or export label
+should say "coarse shape prior" or equivalent, not "reconstruction" or
+"visualization of your anatomy" — the current `SYNTHESIZED` export tag
+(`recon/export.py`) is directionally right but doesn't itself carry this
+distinction; worth tightening its wording if Head B reaches a UI.
+
 Output artifacts pulled down to
 `outputs/phase3_recon/` (gitignored, like every other checkpoint dir) and
 inspected directly, not just trusted from the log: `latest.pt` is a real
