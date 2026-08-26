@@ -33,7 +33,12 @@ confound before it found a real fix.**
   meets the WHO TPP triage sensitivity/specificity targets on held-out TBX11K
   (retrospective research split; no prospective or prevalence-adjusted
   evaluation), with a tight, non-overlapping CI against every earlier
-  configuration. An augmentation-strength sweep
+  configuration. **This is a ceiling, not an out-of-the-box deployable
+  number** — a threshold frozen from validation instead of TBX11K itself
+  (`eval/frozen_threshold_check.py`) gives 98.2% sensitivity but only 44.0%
+  specificity on TBX11K, well below the 70% floor; per-site threshold
+  recalibration is required to actually realize 92.6%, not optional. An
+  augmentation-strength sweep
   (mild/medium/aggressive) confirmed the mechanism: too-aggressive texture
   randomization destroys real diagnostic texture (cavitation, nodules) along
   with the confound, and mild wins because it removes less signal overall
@@ -662,6 +667,36 @@ the clean baseline's CI. This is not Montgomery-sized noise; at this N the
 separation is real. (This is one direction, on one held-out source, selected
 by a sweep run on that same held-out set — see Limitations below.)
 
+**Frozen-threshold operating point at the winning config (`eval/frozen_threshold_check.py`,
+same checkpoint as the 92.6% ceiling, no retraining).** The 92.6% number
+above is a *ceiling* — best achievable sensitivity at spec≥70% under a
+threshold chosen on TBX11K itself. Deriving the threshold the honest way
+instead — frozen from validation (Shenzhen+Montgomery, val AUC 0.951),
+never touching TBX11K until scoring — and applying it to held-out TBX11K:
+
+| | sens | spec | meets WHO TPP minimum (spec≥70%)? |
+|---|---|---|---|
+| Ceiling (per-site threshold, TBX11K-derived) | 92.6% [90.3, 94.6] | ≥70% by construction | — |
+| **Frozen threshold (validation-derived)** | **98.2% [97.1, 99.2]** | **44.0% [42.8, 45.1]** | **✗ no** |
+
+**This does not meet the WHO TPP bar out of the box.** A global threshold
+frozen from Shenzhen+Montgomery validation data massively over-triages on
+TBX11K — 98.2% sensitivity but only 44.0% specificity, far below the 70%
+floor, essentially the same over-triage failure mode already documented for
+the pre-lung-crop baseline (line ~342: 95.3%/30.0%). Lung-crop + mild-aug
+fixed *discrimination* (the ceiling moved from 78.5%→92.6%) but did **not**
+fix *threshold transfer* — the val→TBX11K calibration gap survives the fix
+essentially untouched. The 92.6% headline is real as a statement about what
+this encoder can discriminate, but reading it as "deploys and meets WHO TPP"
+without a per-site recalibration step is not supported by this checkpoint.
+Per-deployment threshold calibration (proposal §5) is not optional here —
+it is the difference between 44% and 70%+ specificity at this operating
+point. This reproduces the same qualitative finding as the pre-lung-crop
+baseline table above and the Montgomery-direction table below (val-derived
+thresholds transfer sensitivity far better than specificity across sources)
+— it is a property of frozen cross-source thresholds on these datasets, not
+something lung-crop + mild-aug was ever positioned to fix.
+
 The strength sweep confirms the exact mechanism predicted: TB findings
 (cavitation, miliary nodules, reticulonodular infiltrate) are themselves
 high-frequency texture, so aggressive randomization of sharpening/noise/
@@ -786,21 +821,37 @@ lung-crop + mild-aug already captured.
 
 **Not yet run:** source-adversarial training (DANN) — deliberately last, per
 the plan, since it's unstable and easy to fool without the complement-AUC
-check already in place to verify it isn't just satisfied superficially. Given
-Steps 1-4 already found a configuration that meets the WHO TPP sensitivity
-target on held-out TBX11K (retrospectively, with tight CIs), DANN's expected
-marginal value from here is low; worth treating as optional rather than
-required to complete this intervention plan.
+check already in place to verify it isn't just satisfied superficially.
+**Revised priority after the frozen-threshold finding above:** Steps 1-4
+fixed discrimination (the 92.6% ceiling) but left threshold transfer
+essentially broken (44.0% frozen-threshold specificity, well under the 70%
+floor) — that is precisely the failure mode DANN-style domain-invariant
+training targets, so its expected marginal value is higher than originally
+assessed here, not lower. Per-deployment threshold calibration (proposal
+§5) is the cheaper fix to try first since it needs no retraining; DANN is
+the next lever if calibration alone can't close the gap. Still optional for
+now, but no longer for the reason originally given.
 
 ---
 
 ## Limitations
 
-The headline result — lung-crop + mild texture augmentation meets the WHO
-TPP triage sensitivity/specificity targets on held-out TBX11K (retrospective
+The headline result — lung-crop + mild texture augmentation gets held-out
+TBX11K discrimination to the point where a per-site-recalibrated threshold
+meets the WHO TPP triage sensitivity/specificity targets (retrospective
 research split; no prospective or prevalence-adjusted evaluation) — is real
 but narrower than it can sound quoted alone:
 
+- **The 92.6% figure is a ceiling, not a deployable operating point.** A
+  threshold frozen from validation and applied to TBX11K without
+  recalibration (`eval/frozen_threshold_check.py`) gives 98.2% sensitivity
+  but only 44.0% [42.8, 45.1] specificity — well below the 70% WHO TPP
+  floor. Lung-crop + mild-aug fixed discrimination (the ceiling), not
+  threshold transfer (the calibration gap is essentially unchanged from the
+  pre-lung-crop baseline). Quoting 92.6% as "this model meets WHO TPP"
+  without the per-site-recalibration caveat overstates what was
+  demonstrated; see the Phase 2 validation results section for the full
+  frozen-threshold-vs-ceiling table.
 - **Single-direction strength.** The 92.6% [90.3, 94.6] result is one
   direction only — Shenzhen + Montgomery trained, TBX11K held out. The
   reverse direction (Shenzhen + TBX11K trained, Montgomery held out) is
