@@ -25,6 +25,36 @@ def load_ct_volume(series_dir: str | Path, resample_mm: float = DEFAULT_RESAMPLE
     return read(str(series_dir), resample_target=resample_mm)
 
 
+def load_ct_volume_cached(series_dir: str | Path, resample_mm: float = DEFAULT_RESAMPLE_MM,
+                          cache_dir: str | Path | None = None):
+    """
+    Same as load_ct_volume, but caches the loaded+resampled Subject to disk
+    (torch.save/load, not just the density array — the Subject also carries
+    the affine/geometry build_drr needs). DICOM series read + resample is
+    ~7-9s/call (measured), dwarfing the ~0.3-0.4s model forward+backward —
+    at that ratio, training step count is bottlenecked by disk I/O, not GPU
+    compute. A cache hit is essentially free by comparison.
+
+    cache_dir defaults to a `.cache/` directory next to series_dir's parent
+    (i.e. alongside the `dicom/` directory itself), gitignored like the
+    DICOM data it derives from.
+    """
+    series_dir = Path(series_dir)
+    if cache_dir is None:
+        cache_dir = series_dir.parent.parent / ".cache" / f"resample_{resample_mm}mm"
+    else:
+        cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"{series_dir.name}.pt"
+
+    if cache_path.exists():
+        return torch.load(cache_path, weights_only=False)
+
+    subject = load_ct_volume(series_dir, resample_mm)
+    torch.save(subject, cache_path)
+    return subject
+
+
 def build_drr(subject, height: int = 320, sdd: float = 1020.0, delx: float = 2.0,
               device: str | torch.device = "cuda") -> DRR:
     """

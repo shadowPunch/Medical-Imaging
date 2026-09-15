@@ -42,7 +42,7 @@ from PIL import Image
 from data.dataset import load_montgomery, load_shenzhen, load_tbx11k
 from data.transforms import _MEAN, _STD
 from models.tb_model import build_model
-from recon.ct_data import build_drr, load_ct_volume, random_pose
+from recon.ct_data import build_drr, load_ct_volume_cached, random_pose
 
 _MEAN_T = torch.tensor(_MEAN).view(1, 3, 1, 1)
 _STD_T = torch.tensor(_STD).view(1, 3, 1, 1)
@@ -80,7 +80,7 @@ def paired_step(model, ct_series: Path, image_size: int, volume_size: int,
     (see code/readme.md's Phase 3 section for the diagnostic that motivated
     this).
     """
-    subject = load_ct_volume(ct_series)
+    subject = load_ct_volume_cached(ct_series)
     drr = build_drr(subject, height=image_size, device=device)
     rot, trans = random_pose(device=device)
     drr_img = drr(rot, trans, parameterization="euler_angles", convention="ZXY")
@@ -168,7 +168,7 @@ def main() -> None:
     # canonical_volume_shape is captured now, before any substitution, since
     # canonical_drr.density itself gets overwritten each step and can't be
     # trusted to still reflect the original geometry after the first step.
-    canonical_subject = load_ct_volume(ct_series[0])
+    canonical_subject = load_ct_volume_cached(ct_series[0])
     canonical_drr = build_drr(canonical_subject, height=args.image_size, device=device)
     canonical_volume_shape = tuple(canonical_drr.density.shape)
 
@@ -194,7 +194,7 @@ def main() -> None:
         if args.diagnose_every and step % args.diagnose_every == 0:
             model.eval()
             with torch.no_grad():
-                probe_subject = load_ct_volume(random.choice(ct_series))
+                probe_subject = load_ct_volume_cached(random.choice(ct_series))
                 probe_drr = build_drr(probe_subject, height=args.image_size, device=device)
                 probe_rot, probe_trans = random_pose(device=device, rotation_deg=0.0, translation_mm=0.0)
                 probe_img = probe_drr(probe_rot, probe_trans, parameterization="euler_angles", convention="ZXY")

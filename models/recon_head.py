@@ -53,6 +53,17 @@ class ReconHead(nn.Module):
             up_block(base_channels // 2, base_channels // 4),
         )
         self.to_density = nn.Conv3d(base_channels // 4, 1, kernel_size=1)
+        # Real CT density is ~50-63% near-zero air/background (measured on
+        # held-out LIDC-IDRI — see code/readme.md's Phase 3 section). Default
+        # init leaves this bias near 0, so softplus(0)=ln(2)~=0.693 is every
+        # voxel's starting prediction; reaching the sparse floor (<0.02)
+        # needs pre-activation below ~-3.9, and a checkpoint trained 2000
+        # steps only moved this bias to -0.095 — nowhere near that, which is
+        # the confirmed mechanism behind predictions that are never near-zero
+        # anywhere. Starting the bias there directly, instead of asking
+        # gradient descent to find it from ~0, should make the sparse
+        # background the default rather than something to slowly discover.
+        nn.init.constant_(self.to_density.bias, -4.0)
 
     def forward(self, features: list[torch.Tensor]) -> torch.Tensor:
         """
