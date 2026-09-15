@@ -207,9 +207,12 @@ the real CT's own resampled density.
 *(These are the original 2000-step Kaggle checkpoint's numbers. A
 diagnosed-and-fixed mechanism further below in this section — a slow-to-
 move softplus bias, compounded by an I/O bottleneck limiting how many
-steps were affordable — improved every one of these four metrics in a
-follow-up local run; see "The undertraining hypothesis, tested properly"
-for the fixed numbers and what's still unverified about them.)*
+steps were affordable — was confirmed with a matched-scale 8000-step
+Kaggle rerun: PSNR 15.99→28.33 and SSIM 0.245→0.733, both now clearing
+this section's own "looks like the target" benchmarks, though LPIPS and
+projection-consistency moved the other way — see "The undertraining
+hypothesis, tested properly" for the full comparison and the honest
+caveat on what didn't improve alongside the headline numbers.)*
 
 **The honest answer: not yet a thorax, by direct voxel comparison — but
 not pure noise either.** PSNR ~16dB and SSIM ~0.24 are low by the
@@ -347,10 +350,66 @@ showed during training, the resolution difference is very unlikely to
 be the primary explanation — but a fully matched-scale comparison
 (same volume_size, same step count, ideally on Kaggle at the original
 320/128 scale with these two fixes) is the next step to pin the
-magnitude down precisely, not yet run. **What's now well-supported: this
-was substantially an undertraining problem compounded by a slow-to-move
-softplus bias, both fixed, both showing real, consistent, measured
-improvement across every metric checked.**
+magnitude down precisely.
+
+**That matched-scale confirmation was run.** Ported both fixes into
+`tb_phase3_kaggle.ipynb` (self-contained — the notebook re-implements the
+model/training code inline rather than importing `code/`, so the local
+fixes didn't propagate automatically) at the original 320px/128³
+resolution, raised `STEPS` from 2000 to 8000 (affordable now that caching
+removed the I/O bottleneck), and added the same live sparsity diagnostic
+plus a one-time cache warm-up before training starts. Pushed as kernel
+version 2, ran end-to-end on Kaggle (T4, ~4.9h: ~2.6h CT fetch — slower
+than the original run's TCIA fetch, API-side, not a regression in this
+pipeline — 13.4 min cache warm-up, ~2.1h for 8000 steps), 0 errors,
+8000/8000 steps, real export from a held-out CXR (`s0807.png`) confirmed.
+
+Full sparsity trajectory (40 checkpoints, every 200 steps) tells a more
+complete story than the local test's four samples: mean pred frac<0.02
+across the whole run was 52.6% against the target's own 57.1% — close on
+average — but the first half of training (steps 200–4000) ran slightly
+*sparser* than target (+7.1 percentage points) while the second half
+(steps 4200–8000) ran *less* sparse than target (−16.0pp), a real
+23-point shift, not just noise on top of a stable match. Plausible and
+untested: the shape-induction term (active here, absent from the local
+test — it needs real unpaired CXRs, which the reduced local test didn't
+pass in) optimizes a different objective (re-projection consistency
+against a canonical geometry, not direct density matching) that may pull
+the sparsity solution away from pure density-matching as its relative
+weight in the loss grows over training. Not chased further here.
+
+Ran `recon/eval_paired.py` against the checkpoint at matched scale
+(320px/128³) — for the first time, a true apples-to-apples comparison
+against the original run:
+
+| Metric | Original (2000 steps, old init) | Full-scale fixed (8000 steps, both fixes) |
+|---|---|---|
+| PSNR | 15.99 ± 1.73 | **28.33 ± 0.59** |
+| SSIM | 0.245 ± 0.053 | **0.733 ± 0.039** |
+| LPIPS | 0.595 ± 0.021 | 0.649 ± 0.034 (worse) |
+| Projection MSE | 0.310 ± 0.082 | 0.740 ± 0.083 (worse, still ≪2.0 ceiling) |
+
+**PSNR and SSIM improved dramatically — for the first time, both clear
+the "typical successful reconstruction" benchmarks cited earlier in this
+document (PSNR>25dB, SSIM>0.6).** This is the real, matched-scale
+confirmation the reduced-scale local test could only suggest. **But LPIPS
+and projection-consistency both moved in the *opposite* direction, and
+that is reported plainly rather than smoothed over.** A plausible,
+untested explanation: PSNR/SSIM measure direct per-voxel value agreement
+(where getting the background's magnitude right — the actual mechanism
+fixed — dominates), while LPIPS (a perceptual/texture metric on 2D axial
+slices) and projection-consistency (geometric alignment when re-projected)
+are more sensitive to *fine structure and precise spatial arrangement*,
+which nothing here specifically targeted — plausibly related to the
+second-half sparsity drift above, or to the shape-induction term trading
+some geometric precision for broader real-CXR generalization, or to
+something not yet identified. **Honest summary: the negative-composition-
+style mechanism fix this section is built around — get the dominant,
+easy-to-get-wrong quantity (background density) right — worked as
+intended and produced a large, real improvement on the metrics it should
+improve. It did not uniformly improve every quality axis, and claiming
+otherwise would repeat exactly the kind of overclaim this document has
+corrected itself out of before.**
 
 **Does this clear §11a's threshold for shipping Head B as more than
 illustrative-only? There is no numeric threshold to clear — checked the
@@ -371,18 +430,28 @@ prevent — stating that plainly instead.**
 What the numbers *do* support, read against §11a's actual mechanism:
 Head B ships exactly as the proposal's unconditional default already
 specified — illustrative-only, structurally walled off from Head A's
-diagnostic path — and these results give no reason to claim anything
-stronger. Read narrowly, the honest framing per-metric is **a coarse
-shape prior, not a reconstruction of the patient's anatomy**: SSIM 0.245
-and LPIPS 0.595 on unseen CT indicate the model has learned thoracic
-silhouette and little finer structure, while the projection-consistency
-result (0.31 against a 2.0 uncorrelated-random ceiling) is the weakest
-thing a single-view method can produce and still be non-trivial — genuine
-signal, not noise, just not anatomy-accurate. Any UI or export label
-should say "coarse shape prior" or equivalent, not "reconstruction" or
-"visualization of your anatomy" — the current `SYNTHESIZED` export tag
-(`recon/export.py`) is directionally right but doesn't itself carry this
-distinction; worth tightening its wording if Head B reaches a UI.
+diagnostic path — and this doesn't change with better numbers, because
+§11a's default was never conditional on numbers in the first place.
+
+**The per-metric characterization does need updating, though — the
+full-scale fixed checkpoint (above) is a materially different result from
+the original run this section was first written against.** The original
+2000-step checkpoint (SSIM 0.245, LPIPS 0.595) genuinely was "a coarse
+shape prior, not a reconstruction" — thoracic silhouette and little finer
+structure. The 8000-step fixed checkpoint's SSIM (0.733) and PSNR (28.33)
+clear the benchmarks this document cited for "looks like the target,"
+which is a real, substantial step up from "coarse shape prior." It is
+*not* a validated reconstruction, for reasons that have nothing to do
+with §11a's threshold question: the worse LPIPS (0.649) and projection-
+consistency (0.740) numbers on that same checkpoint mean fine structure
+and precise geometric alignment did not improve alongside voxel-value
+accuracy — so the honest framing is now "close in bulk density values,
+not confirmed accurate in fine structure or geometry," a step beyond
+"coarse shape prior" but still short of "reconstruction." Any UI or
+export label should reflect that middle position, not either extreme —
+the current `SYNTHESIZED` export tag (`recon/export.py`) is directionally
+right but doesn't carry this distinction; worth tightening its wording if
+Head B reaches a UI.
 
 Output artifacts pulled down to
 `outputs/phase3_recon/` (gitignored, like every other checkpoint dir) and
