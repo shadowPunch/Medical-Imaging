@@ -142,6 +142,11 @@ def main() -> None:
                              "prediction's voxels below 0.02 density (target CT is ~50-60%% "
                              "near-zero air/background; a healthy fit should trend toward that, "
                              "not stay at 0%%).")
+    parser.add_argument("--output", type=str, default=None,
+                        help="If set, saves {'model','optimizer','step'} here at the end — "
+                             "same format recon/eval_paired.py expects. This script was a smoke "
+                             "test with no checkpoint saving until the bias-init/caching fixes "
+                             "made local runs long enough to be worth evaluating.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -209,6 +214,13 @@ def main() -> None:
             model.train()
 
     print("\nDone (smoke run — not trained to convergence; see recon/train_recon.py's docstring).")
+
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(),
+                   "step": args.steps}, out_path)
+        print(f"Saved checkpoint -> {out_path}")
 
 
 if __name__ == "__main__":
