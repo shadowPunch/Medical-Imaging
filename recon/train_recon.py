@@ -43,18 +43,23 @@ from data.dataset import load_montgomery, load_shenzhen, load_tbx11k
 from data.transforms import _MEAN, _STD
 from models.tb_model import build_model
 from recon.ct_data import build_drr, load_ct_volume_cached, random_pose
+from recon.drr_realism import STRENGTHS, realistic_drr
 
 _MEAN_T = torch.tensor(_MEAN).view(1, 3, 1, 1)
 _STD_T = torch.tensor(_STD).view(1, 3, 1, 1)
 
 
-def drr_to_model_input(drr_img: torch.Tensor, image_size: int) -> torch.Tensor:
+def drr_to_model_input(drr_img: torch.Tensor, image_size: int, realism: str = "off",
+                       generator: torch.Generator | None = None,
+                       realism_prob: float = 1.0) -> torch.Tensor:
     """(B,1,H,W) raw DRR intensities -> (B,3,image_size,image_size) ImageNet-normalized,
     matching data/transforms.py's convention so the shared encoder sees a consistent
-    input distribution regardless of whether it came from a real CXR or a synthetic DRR."""
+    input distribution regardless of whether it came from a real CXR or a synthetic DRR.
+    realism: see recon/drr_realism.py — makes the DRR look like a real film."""
     x = drr_img
     x = (x - x.amin(dim=(2, 3), keepdim=True)) / (
         x.amax(dim=(2, 3), keepdim=True) - x.amin(dim=(2, 3), keepdim=True) + 1e-8)
+    x = realistic_drr(x, realism, generator, realism_prob)
     x = F.interpolate(x, size=(image_size, image_size), mode="bilinear", align_corners=False)
     x = x.repeat(1, 3, 1, 1)
     return (x - _MEAN_T.to(x.device)) / _STD_T.to(x.device)
@@ -67,7 +72,8 @@ def real_cxr_to_model_input(path: Path, image_size: int) -> torch.Tensor:
 
 
 def paired_step(model, ct_series: Path, image_size: int, volume_size: int,
-                device: torch.device, loss_fn: str = "mse") -> torch.Tensor:
+                device: torch.device, loss_fn: str = "mse", realism: str = "off",
+                realism_prob: float = 1.0) -> torch.Tensor:
     """
     loss_fn: 'mse' (original) or 'l1'. Real CT density is highly skewed —
     roughly half the voxels are near-zero air/background — and plain MSE on
@@ -85,7 +91,7 @@ def paired_step(model, ct_series: Path, image_size: int, volume_size: int,
     rot, trans = random_pose(device=device)
     drr_img = drr(rot, trans, parameterization="euler_angles", convention="ZXY")
 
-    x = drr_to_model_input(drr_img, image_size)
+    x = drr_to_model_input(drr_img, image_size, realism, realism_prob=realism_prob)
     pred_volume = model.forward_recon(x)  # (1, 1, V, V, V)
 
     target = subject.density.data.to(device).squeeze(0)  # torchio stores (1, D, H, W) -> (D, H, W)
@@ -134,6 +140,13 @@ def main() -> None:
     parser.add_argument("--steps",      type=int, default=5)
     parser.add_argument("--lr",         type=float, default=1e-4)
     parser.add_argument("--shape-induction-weight", type=float, default=0.5)
+    parser.add_argument("--drr-realism", type=str, default="off",
+                        choices=["off", *STRENGTHS],
+                        help="Film-like augmentation of the paired DRR input (recon/drr_realism.py) "
+                             "to shrink the DRR -> real CXR domain gap. Target CT is untouched.")
+    parser.add_argument("--drr-realism-prob", type=float, default=1.0,
+                        help="Chance each paired DRR gets the realism effect. Below 1.0 keeps "
+                             "clean DRRs in training — a realism-only model degraded on them.")
     parser.add_argument("--paired-loss", type=str, default="mse", choices=["mse", "l1"],
                         help="See paired_step's docstring — testing whether L1 avoids the "
                              "regression-to-the-mean-density behavior MSE showed on held-out CT.")
@@ -182,7 +195,8 @@ def main() -> None:
         optimizer.zero_grad()
 
         loss_paired = paired_step(model, random.choice(ct_series), args.image_size,
-                                  args.volume_size, device, loss_fn=args.paired_loss)
+                                  args.volume_size, device, loss_fn=args.paired_loss,
+                                  realism=args.drr_realism, realism_prob=args.drr_realism_prob)
         loss = loss_paired
         log = f"step {step}/{args.steps}  paired={loss_paired.item():.4f}"
 

@@ -24,6 +24,7 @@ Example:
         --ct-dir ../datasets/lidc-idri/dicom_heldout
 """
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -32,18 +33,22 @@ import torch.nn.functional as F
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 from models.tb_model import build_model
-from recon.ct_data import build_drr, load_ct_volume, random_pose
+from recon.ct_data import build_drr, load_ct_volume_cached, random_pose
 from recon.train_recon import drr_to_model_input
 
 
 def eval_one_series(model, series_dir: Path, image_size: int, volume_size: int,
-                    device: torch.device, lpips_fn) -> dict:
-    subject = load_ct_volume(series_dir)
+                    device: torch.device, lpips_fn, realism: str = "off",
+                    generator: torch.Generator | None = None) -> dict:
+    subject = load_ct_volume_cached(series_dir)
     drr = build_drr(subject, height=image_size, device=device)
     rot, trans = random_pose(device=device, rotation_deg=0.0, translation_mm=0.0)  # canonical AP
     input_drr = drr(rot, trans, parameterization="euler_angles", convention="ZXY")
 
-    x = drr_to_model_input(input_drr, image_size)
+    # realism != off: film-like input, still scored against the true CT and
+    # re-projected against the clean DRR -- the nearest thing to a real film
+    # with known ground truth.
+    x = drr_to_model_input(input_drr, image_size, realism, generator)
     with torch.no_grad():
         pred_volume = model.forward_recon(x)  # (1, 1, V, V, V)
 
@@ -108,7 +113,11 @@ def main() -> None:
     parser.add_argument("--backbone",   type=str, default="efficientnet_b0")
     parser.add_argument("--image-size", type=int, default=320)
     parser.add_argument("--volume-size", type=int, default=128)
+    parser.add_argument("--drr-realism", type=str, default="off",
+                        help="Feed film-like DRRs (recon/drr_realism.py) instead of clean ones.")
+    parser.add_argument("--json-out", type=str, default=None)
     args = parser.parse_args()
+    gen = torch.Generator().manual_seed(0)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(args.backbone, pretrained=False, with_recon=True,
@@ -131,7 +140,7 @@ def main() -> None:
     for series_dir in series_dirs:
         try:
             r = eval_one_series(model, series_dir, args.image_size, args.volume_size,
-                                device, lpips_fn)
+                                device, lpips_fn, args.drr_realism, gen)
             results.append(r)
             print(f"  {r['series']}: PSNR={r['psnr']:.2f}  SSIM={r['ssim']:.4f}  "
                   f"LPIPS={r['lpips']:.4f}  proj_mse={r['projection_mse']:.4f}")
@@ -155,6 +164,15 @@ def main() -> None:
           f"[{np.min(lpipss):.4f}, {np.max(lpipss):.4f}]")
     print(f"  Projection MSE: mean={np.mean(proj):.4f}  std={np.std(proj):.4f}  "
           f"[{np.min(proj):.4f}, {np.max(proj):.4f}]")
+
+    if args.json_out:
+        summary = {"checkpoint": args.checkpoint, "drr_realism": args.drr_realism, "n": len(results),
+                   **{k: {"mean": float(np.mean(v)), "std": float(np.std(v))}
+                      for k, v in [("psnr", psnrs), ("ssim", ssims), ("lpips", lpipss),
+                                   ("projection_mse", proj)]}}
+        Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.json_out).write_text(json.dumps(summary, indent=2))
+        print(f"Saved -> {args.json_out}")
 
 
 if __name__ == "__main__":

@@ -119,6 +119,16 @@ real data; not trained to convergence.** `code/recon/`:
 - `recon/export.py` — NRRD/NIfTI export via SimpleITK, each file tagged
   "SYNTHESIZED" at the metadata level (belt-and-braces alongside the §11a
   code-level guarantee, not a replacement for it).
+- `recon/drr_realism.py` — film-like augmentation of the paired DRR input
+  (body crop, tone curve, scatter, blur, edge enhancement, noise), applied
+  to a random fraction of training samples (`--drr-realism mild
+  --drr-realism-prob 0.5`). Input-only; the CT target is untouched.
+- `recon/domain_gap_probe.py` — measures the DRR -> real-CXR gap for a
+  checkpoint without paired real ground truth (none exists publicly):
+  encoder-feature separation and predicted-volume statistics vs. the real
+  CT population. See "DRR -> real-CXR domain gap" below.
+- `tests/` — pytest unit tests for the two modules above
+  (`python -m pytest tests/`).
 
 **Training run (completed).** Driven headlessly via the Kaggle CLI
 (`kaggle kernels push`), not the browser — `code/tb_phase3_kaggle.ipynb`,
@@ -477,6 +487,68 @@ explicit disk-space guard. A second pass completed all steps but ran the
 shape-induction term over 0 CXRs due to the mount-path assumption above
 being wrong; fixed and is what produced the numbers reported here.
 
+### DRR -> real-CXR domain gap (2026-09-20)
+
+**Problem.** No public dataset pairs a real chest X-ray with the same
+patient's CT, so the paired supervision is built by rendering DRRs from
+LIDC-IDRI CT (DiffDRR). The PSNR/SSIM above are measured on held-out
+*DRRs*, not on real films, so they say nothing on their own about real
+inputs. Rendered DRRs and real CXRs differ visibly. Framing is the biggest
+difference: the CT field of view leaves the body in a small central box
+(~55% black background, hard truncated edges), while a real film has
+anatomy running off the frame. Tone is next (DRR mean intensity 0.23 vs.
+0.54-0.67 for real films). Scatter, detector blur, vendor edge enhancement
+and noise are secondary.
+
+**Fix — `recon/drr_realism.py`.** Every one of those effects is randomized
+per sample: a body crop with a margin that is often negative (it cuts
+inside the CT slab to remove its outline), a gamma tone curve, a scatter
+haze, blur, unsharp masking and noise. It changes only the model's input;
+the CT target is untouched. The two strength presets mirror Phase 2's
+`--aug-strength` finding that mild beats aggressive.
+
+**Measurement — `recon/domain_gap_probe.py`.** No real-film ground truth
+exists, so the probe uses two proxies on 300 DRRs (12 held-out CTs × 25
+poses) and 300 real CXRs (TBX11K val, which no Phase 3 run trained on):
+- *Feature side:* the separation ratio, which is the squared distance
+  between the median encoder features of real CXRs and DRRs, divided by
+  their within-domain spread (MAD). Lower means real films sit closer to
+  what the encoder was trained on. A linear-probe AUC is also reported,
+  but it saturates at 1.0 for any sizeable gap.
+- *Output side:* per-volume statistics of the predictions (near-zero air
+  fraction, mean density, percentiles), compared against the *population*
+  of real chest CTs. A real CXR's own CT is unknown, but what chest CTs look
+  like in general is known. Reported as z = |median prediction − CT
+  mean| / CT std.
+- *Exploding predictions:* the number of volumes whose mean density is
+  more than 5 CT-stds off.
+
+The probe first used means, and a local run showed why that isn't enough:
+3 of 300 real films produced volumes with mean density up to 52 (normal
+≈0.1). That inflated the within-domain variance and made the separation
+ratio look 100× better than it was. Medians/MAD plus an explicit outlier
+count prevent this (`tests/test_domain_gap_probe.py` checks it).
+
+**Local A/B** (1000 steps, 224px/64³, paired term only — no shape
+induction locally; two independent no-realism runs give the noise floor):
+
+| Arm | Paired, clean DRR (PSNR / SSIM) | Paired, film-like DRR | Separation (clean DRR vs real) | Exploding (real) | Real-CXR z: air frac / mean / p90 / p99 |
+|---|---|---|---|---|---|
+| no realism #1 | 19.21 / 0.291 | 18.49 / 0.227 | 1.27 | 0/300 | 1.7 / 2.8 / 4.1 / 3.4 |
+| no realism #2 | 20.23 / 0.264 | 19.85 / 0.231 | 1.52 | 0/300 | 2.0 / 1.7 / 2.0 / 2.3 |
+| mild, every sample | 17.86 / **0.143** | 20.97 / 0.291 | 0.44 | **3/300** | 2.6 / 2.1 / 2.1 / 2.4 |
+| **mild, 50% of samples** | **20.20 / 0.288** | **20.30 / 0.270** | **0.74** | **0/300** | **0.9 / 1.5 / 1.5 / 1.9** |
+
+Applying realism to every sample closes the most feature gap. It also
+degrades on clean DRRs (SSIM 0.14; the model never sees one) and
+destabilizes the output head on ~1% of real films. Applying it to half the
+samples keeps clean-DRR quality inside the no-realism noise band, does
+better on film-like inputs, roughly halves the feature gap, and is the
+closest arm to real-CT statistics on every output measure. It is the
+chosen configuration.
+
+**Full-scale result.** FULLSCALE_RESULT_PLACEHOLDER
+
 **CT data.** `datasets/lidc-idri/dicom/` holds 150 real CT series (11 GB, 0
 failures) — fetched directly via TCIA's public REST API
 (`datasets/lidc-idri/fetch_dicom.py`), no desktop NBIA Data Retriever
@@ -559,6 +631,8 @@ code/
 │   ├── histogram_probe.py    — Spatially-blind intensity-histogram probe
 │   ├── shortcut_baseline.py  — Source-classifier shortcut-detector baseline
 │   └── complement_monitor.py — Standing in-domain confound diagnostic for any intervention
+├── recon/                 — Phase 3 reconstruction: CT/DRR data, training, paired eval, domain-gap probe, DRR realism, export
+├── tests/                 — pytest unit tests (Phase 3 DRR realism + domain-gap probe)
 ├── figures/               — Diagnostic plots referenced from this readme (tracked; regenerate via the eval/ scripts above, not hand-edited)
 └── utils/
     ├── gradcam.py        — Grad-CAM + heatmap overlay

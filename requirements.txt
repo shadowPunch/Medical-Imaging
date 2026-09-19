@@ -17,3 +17,6 @@ pydicom>=2.4.0
 SimpleITK>=2.3.0
 scikit-image>=0.22.0
 lpips>=0.1.4
+
+# Dev — tests (python -m pytest tests/)
+pytest>=8.0
