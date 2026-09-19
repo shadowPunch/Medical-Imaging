@@ -590,6 +590,39 @@ objective effect already suspected as the explanation for run 2's worse
 LPIPS and projection-consistency numbers, now measured directly rather
 than hypothesized.
 
+**And the paired-only benefit itself was a short-training artifact.**
+Re-running the paired-only A/B with 4× the steps, nothing else changed:
+
+| Local, paired only, 224px/64³ | 1000 steps | 4000 steps |
+|---|---|---|
+| no realism — clean PSNR / SSIM | 19.21-20.23 / 0.264-0.291 | **21.96 / 0.435** |
+| mild @ 50% — clean PSNR / SSIM | 20.20 / 0.288 | 21.60 / 0.401 |
+| no realism — separation (clean) | 1.27-1.52 | **1.08** |
+| mild @ 50% — separation (clean) | **0.74** | 1.75 |
+| no realism — film-like SSIM | 0.227-0.231 | 0.342 |
+| mild @ 50% — film-like SSIM | **0.270** | 0.340 |
+
+At 4000 steps the ordering inverts: the realism arm's measured gap is
+*worse* (1.75 vs. 1.08) and the film-like advantage is gone (SSIM 0.340
+vs. 0.342, indistinguishable). Both no-realism arms also improve far more
+with steps than the realism arm does. **This is the same trap this
+document already recorded once** — the earlier L1-vs-MSE comparison at
+25-75 steps measured the conditional-mean phase common to any loss, not
+the intervention. A 1000-step comparison at reduced scale was again too
+early to decide anything, and the full-scale run (which disagreed with it)
+was right.
+
+**Honest conclusion: DRR realism augmentation does not close this domain
+gap.** It is kept in the codebase because it is tested, off by default
+(`--drr-realism off`), and cheap to re-test against a different training
+regime — not because it earned a place in the recipe. What the work
+actually produced that holds up: a measurement instrument for the gap
+(`recon/domain_gap_probe.py`), a quantified characterization of what the
+gap consists of (framing first, tone second), a measured demonstration
+that the unpaired shape-induction term dominates the paired objective, and
+the negative result itself, which is worth more than the augmentation
+would have been had the reduced-scale numbers been trusted.
+
 **CT data.** `datasets/lidc-idri/dicom/` holds 150 real CT series (11 GB, 0
 failures) — fetched directly via TCIA's public REST API
 (`datasets/lidc-idri/fetch_dicom.py`), no desktop NBIA Data Retriever
