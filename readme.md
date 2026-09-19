@@ -547,7 +547,48 @@ better on film-like inputs, roughly halves the feature gap, and is the
 closest arm to real-CT statistics on every output measure. It is the
 chosen configuration.
 
-**Full-scale result.** FULLSCALE_RESULT_PLACEHOLDER
+**Full-scale result — the local finding did not transfer.** Run 3 (Kaggle
+kernel version 3, mild realism on 50% of samples, 8000 steps, 320px/128³,
+otherwise identical to run 2) came out worse than no realism on every axis
+except one:
+
+| Full-scale (8000 steps, 320px/128³) | Clean DRR PSNR / SSIM | Film-like DRR PSNR / SSIM | Separation, clean / film-like | Projection MSE |
+|---|---|---|---|---|
+| Run 2 — no realism | **28.33 / 0.733** | **31.00 / 0.637** | **4.52 / 1.35** | 0.740 |
+| Run 3 — mild @ 50% | 27.43 / 0.543 | 18.93 / 0.362 | 5.45 / 2.12 | **0.287** |
+
+Realism made the measured domain gap *larger*, not smaller, and the model
+got worse on exactly the film-like inputs it was trained on. The one real
+gain is projection consistency, 2.6× better than run 2 — geometric
+agreement when the predicted volume is re-projected. That this was checked
+before shipping the change is the point: the local A/B alone would have
+supported the opposite claim.
+
+Verified before drawing conclusions: the checkpoint is step 8000/8000 with
+386 keys and a learned density bias of −3.87, and the notebook source
+Kaggle actually ran (pulled back from the kernel) does contain
+`DRR_REALISM = 'mild'` and `DRR_REALISM_PROB = 0.5`. The result is real,
+not a misconfigured run.
+
+**Why — the shape-induction term dominates.** The one structural
+difference between the local A/B and the full-scale runs is the unpaired
+shape-induction loss, which is off locally (no CXR paths passed) and on at
+full scale (10,696 real CXRs, weight 0.5). Repeating the local A/B *with*
+it, everything else unchanged:
+
+| Local arm (1000 steps, 224px/64³) | Clean DRR PSNR / SSIM | Separation (clean) |
+|---|---|---|
+| paired only, no realism | 19.21-20.23 / 0.264-0.291 | 1.27-1.52 |
+| paired only, mild @ 50% | 20.20 / 0.288 | 0.74 |
+| **+ shape induction**, no realism | 17.20 / 0.145 | 1.62 |
+| **+ shape induction**, mild @ 50% | 17.47 / 0.142 | 1.18 |
+
+With shape induction on, both arms collapse to the same place and the
+realism difference disappears into the noise. The unpaired term, competing
+for the same encoder, dominates the paired objective — the same competing-
+objective effect already suspected as the explanation for run 2's worse
+LPIPS and projection-consistency numbers, now measured directly rather
+than hypothesized.
 
 **CT data.** `datasets/lidc-idri/dicom/` holds 150 real CT series (11 GB, 0
 failures) — fetched directly via TCIA's public REST API
