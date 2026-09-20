@@ -43,6 +43,20 @@ from train_diagnostic import build_splits, make_loader
 
 ENCODER_PREFIX = "encoder."
 
+# Head A's held-out AUC should not move at all when Head B trains (a frozen
+# encoder gives exactly 0.0000). Allow a hair of slack for nondeterminism, but
+# nothing near the 0.24 drop joint training produced.
+DEFAULT_TOLERANCE = 0.005
+
+
+def drift_verdict(baseline_auc: float, grafted_auc: float,
+                  tolerance: float = DEFAULT_TOLERANCE) -> tuple[bool, str]:
+    """Standing check: did a Phase 3 change degrade the diagnostic head?"""
+    drop = baseline_auc - grafted_auc
+    ok = drop <= tolerance
+    verdict = "OK" if ok else "REGRESSION"
+    return ok, f"[{verdict}] Head A AUC drop {drop:+.4f} (tolerance {tolerance:.4f})"
+
 
 def graft_encoder(base: dict, donor: dict) -> dict:
     """Base state dict with its encoder weights replaced by the donor's."""
@@ -126,6 +140,10 @@ def main() -> None:
     parser.add_argument("--linear-probe", action="store_true",
                         help="Also refit a fresh linear head on each encoder's frozen "
                              "features, to test whether the TB signal survived the drift.")
+    parser.add_argument("--max-auc-drop", type=float, default=None,
+                        help=f"Exit non-zero if Head A's held-out AUC drops more than this "
+                             f"(suggested: {DEFAULT_TOLERANCE}). Use in a standing check so a "
+                             f"Phase 3 change can't silently degrade the diagnostic head.")
     parser.add_argument("--json-out",   type=str, default=None)
     args = parser.parse_args()
 
@@ -166,6 +184,19 @@ def main() -> None:
         Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.json_out).write_text(json.dumps(results, indent=2))
         print(f"Saved -> {args.json_out}")
+
+    if args.max_auc_drop is not None:
+        failed = []
+        for ck in args.recon_checkpoint:
+            ok, msg = drift_verdict(results["baseline"]["auc"], results[ck]["auc"],
+                                    args.max_auc_drop)
+            print(f"{Path(ck).parent.name:<28} {msg}")
+            results[ck]["verdict_ok"] = ok
+            if not ok:
+                failed.append(ck)
+        if failed:
+            raise SystemExit(f"Head A regressed under {len(failed)} checkpoint(s): "
+                             + ", ".join(failed))
 
 
 if __name__ == "__main__":

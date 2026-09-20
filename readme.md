@@ -768,6 +768,29 @@ runs 4-5, which is the expected cost of features optimized for diagnosis
 rather than for reconstruction, and it is the honest limitation of this
 checkpoint.
 
+### Standing check: Head A must not move when Head B trains
+
+The encoder-drift bug survived three full-scale runs and a "delivered model"
+write-up because nothing checked for it. It is now a gate, in the same spirit
+as `eval/complement_monitor.py` for the Phase 2 confound:
+
+```
+python -m eval.encoder_drift_probe \
+    --checkpoint outputs/step3_mild_lungcrop_tbx11k/best_model.pt \
+    --recon-checkpoint <phase 3 checkpoint> \
+    --shenzhen ../datasets/tb-shenzen --montgomery ../datasets/tb-montgomery \
+    --tbx11k ../datasets/tbx11k --held-out tbx11k --lung-crop \
+    --max-auc-drop 0.005
+```
+
+Exits non-zero and names the offending checkpoint if Head A's held-out AUC
+drops more than the tolerance. A frozen encoder gives exactly 0.0000; the
+tolerance exists only for nondeterminism, not to excuse real movement.
+Verified in both directions before being trusted: **run 7 passes (exit 0,
+drop +0.0000) and run 4 fails (exit 1, drop +0.2423)** — a gate that never
+fails is not a gate. **Run this against any change that touches the shared
+encoder or Phase 3 training.**
+
 ### Conditioning is bounded by the frozen encoder, not by training (two refuted fixes)
 
 Run 7's weak conditioning got two hypotheses, both tested and both wrong:

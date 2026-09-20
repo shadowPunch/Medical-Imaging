@@ -42,3 +42,27 @@ def test_linear_head_separates_separable_features():
     X = np.vstack([rng.normal(0, 1, (100, 8)), rng.normal(4, 1, (100, 8))])
     y = np.array([0] * 100 + [1] * 100)
     assert compute_auc(y, fit_linear_head(X, y, X)) > 0.99
+
+
+def test_drift_verdict_passes_when_head_a_is_untouched():
+    from eval.encoder_drift_probe import drift_verdict
+    ok, msg = drift_verdict(0.8894, 0.8894)
+    assert ok and "0.0000" in msg
+
+
+def test_drift_verdict_tolerates_noise_level_movement():
+    from eval.encoder_drift_probe import drift_verdict
+    ok, _ = drift_verdict(0.8894, 0.8860)
+    assert ok
+
+
+def test_drift_verdict_fails_on_a_real_regression():
+    from eval.encoder_drift_probe import drift_verdict
+    ok, msg = drift_verdict(0.8894, 0.6471)
+    assert not ok and "0.2423" in msg
+
+
+def test_drift_verdict_does_not_flag_an_improvement():
+    from eval.encoder_drift_probe import drift_verdict
+    ok, _ = drift_verdict(0.8894, 0.9100)
+    assert ok
