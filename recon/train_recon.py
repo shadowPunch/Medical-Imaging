@@ -211,7 +211,9 @@ def main() -> None:
         cxr_paths += [p for p, _ in load_tbx11k(Path(args.tbx11k), split="train")]
     print(f"CT series: {len(ct_series)}  unpaired CXRs: {len(cxr_paths)}")
 
-    model = build_model("efficientnet_b0", pretrained=True, with_recon=True,
+    # ImageNet init is redundant when --init-from supplies the encoder, and
+    # fetching it needs network access the Kaggle offline path doesn't have.
+    model = build_model("efficientnet_b0", pretrained=args.init_from is None, with_recon=True,
                         volume_size=args.volume_size, recon_skip=args.recon_skip).to(device)
     if args.init_from:
         sd = torch.load(args.init_from, map_location=device, weights_only=False)["model"]
