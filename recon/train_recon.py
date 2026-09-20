@@ -71,6 +71,30 @@ def real_cxr_to_model_input(path: Path, image_size: int) -> torch.Tensor:
     return ((x - _MEAN_T[0]) / _STD_T[0]).unsqueeze(0)
 
 
+def setup_trainable(model, freeze_encoder: bool) -> list:
+    """Which parameters Phase 3 updates.
+
+    Joint training measurably destroys Head A: grafting a jointly-trained
+    encoder back onto the Phase 2 diagnostic head drops held-out TBX11K AUC
+    0.889 -> 0.65 (and refitting a fresh head only recovers to 0.77, so the
+    TB-discriminative information is genuinely gone, not just misaligned).
+    The diagnosis is the product and the 3D volume is a visualization aid, so
+    the encoder is frozen and only Head B learns. See eval/encoder_drift_probe.py.
+    """
+    if not freeze_encoder:
+        for p in model.encoder.parameters():
+            p.requires_grad_(True)
+        return list(model.encoder.parameters()) + list(model.recon_head.parameters())
+
+    for p in model.encoder.parameters():
+        p.requires_grad_(False)
+    model.encoder.eval()
+    # Keep it in eval mode through later model.train() calls, or BatchNorm running
+    # stats drift on DRR inputs and Head A changes anyway, frozen weights or not.
+    model.encoder.train = lambda mode=True: model.encoder
+    return list(model.recon_head.parameters())
+
+
 def paired_step(model, ct_series: Path, image_size: int, volume_size: int,
                 device: torch.device, loss_fn: str = "mse", realism: str = "off",
                 realism_prob: float = 1.0) -> torch.Tensor:
@@ -155,6 +179,13 @@ def main() -> None:
                              "prediction's voxels below 0.02 density (target CT is ~50-60%% "
                              "near-zero air/background; a healthy fit should trend toward that, "
                              "not stay at 0%%).")
+    parser.add_argument("--freeze-encoder", action="store_true",
+                        help="Train Head B only, leaving the shared encoder (and so Head A) "
+                             "untouched. See setup_trainable().")
+    parser.add_argument("--init-from", type=str, default=None,
+                        help="Diagnostic checkpoint to initialize the shared encoder from "
+                             "(e.g. the Phase 2 deployed model). Required to make "
+                             "--freeze-encoder meaningful.")
     parser.add_argument("--output", type=str, default=None,
                         help="If set, saves {'model','optimizer','step'} here at the end — "
                              "same format recon/eval_paired.py expects. This script was a smoke "
@@ -178,8 +209,15 @@ def main() -> None:
 
     model = build_model("efficientnet_b0", pretrained=True, with_recon=True,
                         volume_size=args.volume_size).to(device)
-    optimizer = torch.optim.AdamW(
-        list(model.encoder.parameters()) + list(model.recon_head.parameters()), lr=args.lr)
+    if args.init_from:
+        sd = torch.load(args.init_from, map_location=device, weights_only=False)["model"]
+        missing, unexpected = model.load_state_dict(sd, strict=False)
+        print(f"Initialized from {args.init_from} "
+              f"({len(sd)} keys; {len(missing)} not in checkpoint, {len(unexpected)} unused)")
+    trainable = setup_trainable(model, args.freeze_encoder)
+    print(f"Trainable tensors: {len(trainable)} "
+          f"({'Head B only, encoder frozen' if args.freeze_encoder else 'encoder + Head B'})")
+    optimizer = torch.optim.AdamW(trainable, lr=args.lr)
 
     # One reusable canonical geometry for shape-induction re-projection —
     # its own density buffer gets overwritten every step (see shape_induction_step).
