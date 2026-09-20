@@ -669,6 +669,60 @@ models stopped doing. That interpretation is supported, not contradicted,
 by LPIPS and projection consistency moving the other way on the same
 checkpoints.
 
+### Phase 3 training was silently destroying Head A (2026-09-20)
+
+Every Phase 3 run above trains the shared encoder jointly with Head B. §11a's
+firewall (`recon/firewall_test.py`) guarantees Head B never *feeds* Head A at
+inference — it says nothing about the encoder drifting underneath Head A
+during Phase 3 training, and nothing above had checked that. It should have
+been checked before any of these checkpoints were called deliverable.
+
+`eval/encoder_drift_probe.py` grafts a Phase 3 checkpoint's encoder onto the
+Phase 2 deployed diagnostic head (`step3_mild_lungcrop_tbx11k`, lung-crop +
+mild texture aug) and scores the same held-out TBX11K split the Phase 2 result
+was reported on:
+
+| Encoder under Head A | Held-out AUC | Ceiling sens@70% | Refit linear head |
+|---|---|---|---|
+| Phase 2 (baseline) | **0.889** | 0.926 [0.902, 0.947] | — |
+| Run 4 (the checkpoint about to ship) | 0.647 | 0.423 | 0.771 |
+| Run 2 | 0.622 | 0.485 | — |
+| Run 5 | 0.328 (below chance) | 0.217 | 0.683 |
+
+**Joint training costs 24 points of diagnostic AUC — and refitting a fresh
+linear head on the drifted features recovers only to 0.771, so the
+TB-discriminative information is genuinely destroyed, not merely misaligned
+with the old head.** Run 5's below-chance AUC means its features are
+anti-correlated with the label under the Phase 2 head. The diagnosis is the
+product and the 3D volume is an explicitly unvalidated visualization aid
+(§11a), so this trade is unacceptable in the direction it was being made.
+
+**Fix: freeze the encoder, train Head B only** (`--freeze-encoder
+--init-from <phase 2 checkpoint>`, `setup_trainable()`). The encoder is also
+held in `eval()` mode through `model.train()`, or BatchNorm running stats
+drift on DRR inputs and Head A changes anyway with the weights frozen —
+`tests/test_train_recon_freeze.py` covers both. Verified end-to-end rather
+than by construction alone: a local frozen run's encoder grafted back under
+Head A reproduces the baseline exactly, **AUC drop 0.0000** (0.8894 vs.
+0.8894, ceiling sens 0.926 both).
+
+And Head B still learns from features it doesn't get to shape. A local frozen
+run (2000 steps, 320px/64³ — a quarter of the full-scale step count) already
+matches the 8000-step jointly-trained runs on the metrics that survived
+scrutiny, and is near-identical on clean vs. film-like inputs:
+
+| Local frozen (2000 steps, 320px/64³) | Clean DRR | Film-like DRR |
+|---|---|---|
+| PSNR | 21.69 | 21.77 |
+| SSIM | 0.373 | 0.350 |
+| LPIPS | 0.543 | 0.564 |
+| Projection MSE | 0.077 | 0.080 |
+
+That stability across input types is what the realism augmentation was built
+for and is where it finally earns its place: with the encoder frozen, the
+input has to look like what the encoder was trained on, because the encoder
+can no longer adapt to the input.
+
 ### Delivered model
 
 **`outputs/phase3_recon_run4_nosi/latest.pt`** (Kaggle kernel version 4:
