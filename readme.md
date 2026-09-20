@@ -82,8 +82,19 @@ confound before it found a real fix.**
   worth reading in full before citing just the headline number, since
   several earlier configurations looked fine until checked harder.
 
-**Phase 3 — reconstruction head: pipeline built and verified end-to-end on
-real data; not trained to convergence.** `code/recon/`:
+**Phase 3 — reconstruction head: trained at full scale, with the
+DRR -> real-CXR domain gap now measured rather than assumed.** Delivered
+model: `outputs/phase3_recon_run4_nosi/latest.pt` (8000 steps, 320px/128³,
+mild DRR realism on 50% of paired samples, no unpaired shape-induction
+term). Five full-scale runs, and two measurement instruments built along
+the way, established three things that reverse earlier readings of this
+project's own numbers: the unpaired shape-induction term was *hurting*
+reconstruction geometry and patient conditioning; run 2's headline
+PSNR/SSIM (28.33 / 0.733) came largely from predicting a near-identical
+volume for every patient (cross-patient r = 0.963); and DRR realism
+augmentation does not close the domain gap, though it does buy real
+robustness to film-like inputs. Still an unvalidated visualization per
+§11a. Full trail in "DRR -> real-CXR domain gap" below. `code/recon/`:
 
 - `ct_data.py` — loads a real LIDC-IDRI DICOM series directly (DiffDRR reads
   the directory with no manual conversion) and generates DRRs at random
@@ -612,16 +623,84 @@ the intervention. A 1000-step comparison at reduced scale was again too
 early to decide anything, and the full-scale run (which disagreed with it)
 was right.
 
-**Honest conclusion: DRR realism augmentation does not close this domain
-gap.** It is kept in the codebase because it is tested, off by default
-(`--drr-realism off`), and cheap to re-test against a different training
-regime — not because it earned a place in the recipe. What the work
-actually produced that holds up: a measurement instrument for the gap
-(`recon/domain_gap_probe.py`), a quantified characterization of what the
-gap consists of (framing first, tone second), a measured demonstration
-that the unpaired shape-induction term dominates the paired objective, and
-the negative result itself, which is worth more than the augmentation
-would have been had the reduced-scale numbers been trusted.
+**Honest conclusion on the augmentation: DRR realism does not close the
+measured domain gap.** What it does buy is robustness (below).
+
+### Isolating the two factors at full scale (runs 4 and 5)
+
+Run 3 changed realism only; run 4 changed realism *and* removed the
+shape-induction term, so two more full-scale runs were needed to attribute
+anything. All four are 8000 steps at 320px/128³, differing only in the two
+flags:
+
+| Run | Realism | Shape induction | Clean DRR PSNR / SSIM | Film-like PSNR / SSIM | LPIPS | Projection MSE | Separation (clean) | Conditioning: variance ratio / cross-patient r |
+|---|---|---|---|---|---|---|---|---|
+| 2 | off | on | 28.33 / 0.733 | 31.00 / 0.637 | 0.649 | 0.740 | 4.52 | 1.54 / 0.963 |
+| 3 | mild @50% | on | 27.43 / 0.543 | 18.93 / 0.362 | 0.628 | 0.287 | 5.45 | 2.07 / 0.810 |
+| **4** | **mild @50%** | **off** | 21.64 / 0.486 | **20.84 / 0.452** | 0.548 | 0.112 | **1.69** | 3.67 / 0.853 |
+| 5 | off | off | **22.36 / 0.530** | 19.23 / 0.324 | **0.518** | **0.072** | 1.82 | **4.21** / 0.872 |
+
+**Removing the unpaired shape-induction term is the change that mattered**
+— 6-10× better projection consistency, ~2.5× smaller measured domain gap,
+and much better patient conditioning, consistently across both realism
+settings. Realism contributes no gap reduction (1.69 vs. 1.82 is inside
+the noise) but does contribute robustness: under film-like inputs run 4
+holds SSIM 0.486 → 0.452 while run 5 collapses 0.530 → 0.324, and run 4's
+projection MSE degrades 0.112 → 0.142 against run 5's 0.072 → 0.348.
+
+### Why the PSNR/SSIM ordering is misleading (`recon/conditioning_probe.py`)
+
+Runs 4 and 5 score far below run 2 on PSNR/SSIM, which would normally end
+the discussion. It shouldn't here, and the reason is measurable. The
+conditioning probe asks whether a predicted volume depends on *which
+patient* the input came from: between-patient variance over same-patient
+pose-jitter variance, plus the mean correlation between different
+patients' predicted volumes.
+
+**Run 2 predicts near-identical volumes for every patient (r = 0.963,
+variance ratio 1.54).** It is close to an averaged chest — which is exactly
+the strategy that maximizes PSNR/SSIM against a sparse target, and exactly
+the failure mode this document diagnosed on the 2000-step checkpoint
+(r = 0.68-0.79 back then; joint training with the unpaired term made it
+*worse*, not better). Runs 4 and 5 condition on patient identity 2.4-2.7×
+more strongly. So the PSNR/SSIM drop is not straightforwardly a quality
+regression: the metric rewards the averaging that the better-conditioned
+models stopped doing. That interpretation is supported, not contradicted,
+by LPIPS and projection consistency moving the other way on the same
+checkpoints.
+
+### Delivered model
+
+**`outputs/phase3_recon_run4_nosi/latest.pt`** (Kaggle kernel version 4:
+mild realism on 50% of paired samples, no shape induction, 8000 steps,
+320px/128³, step 8000/8000, 386-key state dict, learned density bias
+−3.73). Chosen over run 5 because real films are film-like by definition:
+run 4 gives up a little clean-DRR quality and a little conditioning for
+markedly more stability under the transformation that approximates a real
+radiograph, at the same measured gap. Its real-CXR output statistics also
+match its DRR statistics closely (air fraction 0.445 vs. 0.453, p90 0.213
+vs. 0.213) — the model treats real films much like what it trained on.
+Verified after download, not assumed: firewall checks pass, and
+`sample_reconstruction.nrrd` is a 128³ 2.5mm volume, values in
+[0.0003, 0.296], no NaNs, `SYNTHESIZED` tag intact.
+
+**What is still not claimed:** this is not a validated reconstruction. The
+domain probe's linear AUC is still 1.000 — real CXRs and DRRs remain
+trivially separable in feature space; the gap narrowed, it did not close.
+No comparison against X2CT or DuoLift was run, so §10's upgrade path
+remains untaken, and §11a's unvalidated-visualization default stands
+unchanged.
+
+### What holds up from this work
+
+A measurement instrument for the gap (`recon/domain_gap_probe.py`, robust
+to the outlier failure it was first fooled by), a second instrument for the
+averaging failure mode (`recon/conditioning_probe.py`), a quantified
+characterization of the gap (framing first, tone second), the finding that
+the unpaired shape-induction term was actively hurting reconstruction
+quality, geometry and conditioning at full scale, and the negative result
+on realism-as-gap-closer — which is worth more than the augmentation would
+have been had the reduced-scale numbers been trusted.
 
 **CT data.** `datasets/lidc-idri/dicom/` holds 150 real CT series (11 GB, 0
 failures) — fetched directly via TCIA's public REST API
