@@ -17,22 +17,35 @@ class ReconHead(nn.Module):
     DuoLift code/weights (see code/readme.md's Phase 3 status for why).
 
     Takes the *full* multi-scale feature list (matching SharedEncoder's
-    contract and DiagnosticHead's sibling interface) but only consumes
-    features[-1] for now — shallower scales are accepted for future
-    skip-connection fusion (finer spatial detail than the 10x10 bottleneck
-    alone can provide) and currently ignored. That's an intentional,
-    documented gap, not an oversight.
+    contract and DiagnosticHead's sibling interface). With use_skip=True it
+    also fuses features[-2] — 4x the spatial resolution of the deepest map —
+    into the first decoder stage.
+
+    That skip exists for a measured reason. With the encoder frozen (see
+    recon/train_recon.py's setup_trainable), everything patient-specific has
+    to reach the decoder through the deepest 10x10 map, and the conditioning
+    probe showed the cost: predicted volumes correlated at r=0.94 across
+    different patients, near the averaged-prediction regime. Raising the
+    learning rate didn't move it, which pointed at an information bottleneck
+    rather than an optimization problem.
+
+    use_skip defaults to False so checkpoints trained before this existed
+    still load; the skip parameters are purely additive.
 
     Output is a raw (unbounded) density volume — never consumed by Head A;
     see recon/firewall_test.py for the code-level isolation guarantee.
     """
 
     def __init__(self, in_channels: int, volume_size: int = 128,
-                lift_depth: int = 8, base_channels: int = 32):
+                lift_depth: int = 8, base_channels: int = 32,
+                use_skip: bool = False, skip_channels: int | None = None,
+                skip_lift_channels: int = 16):
         super().__init__()
         self.volume_size = volume_size
         self.lift_depth = lift_depth
         self.lift_channels = base_channels * 2
+        self.use_skip = use_skip
+        self.skip_lift_channels = skip_lift_channels
 
         # 2D -> (lift_channels * lift_depth) channels, so a reshape below
         # turns "channels" into an initial depth axis.
@@ -52,6 +65,16 @@ class ReconHead(nn.Module):
             up_block(base_channels, base_channels // 2),
             up_block(base_channels // 2, base_channels // 4),
         )
+        if use_skip:
+            if skip_channels is None:
+                raise ValueError("use_skip=True requires skip_channels")
+            # features[-2] -> a depth axis matching the first decoder stage,
+            # then merged back to that stage's channel count.
+            self.skip_lift = nn.Conv2d(skip_channels, skip_lift_channels * lift_depth * 2,
+                                       kernel_size=1)
+            self.skip_merge = nn.Conv3d(base_channels * 2 + skip_lift_channels,
+                                        base_channels * 2, kernel_size=3, padding=1)
+
         self.to_density = nn.Conv3d(base_channels // 4, 1, kernel_size=1)
         # Real CT density is ~50-63% near-zero air/background (measured on
         # held-out LIDC-IDRI — see code/readme.md's Phase 3 section). Default
@@ -75,7 +98,18 @@ class ReconHead(nn.Module):
 
         x = self.to_lift(x)                                   # (B, lift_channels*lift_depth, H, W)
         x = x.view(b, self.lift_channels, self.lift_depth, h, w)  # (B, C, D, H, W)
-        x = self.decoder(x)
+
+        x = self.decoder[0](x)
+        if self.use_skip:
+            s = features[-2]
+            s = self.skip_lift(s).view(b, self.skip_lift_channels, self.lift_depth * 2,
+                                       s.shape[-2], s.shape[-1])
+            if s.shape[-3:] != x.shape[-3:]:
+                s = F.interpolate(s, size=x.shape[-3:], mode="trilinear", align_corners=False)
+            x = self.skip_merge(torch.cat([x, s], dim=1))
+        for block in self.decoder[1:]:
+            x = block(x)
+
         x = self.to_density(x)
 
         if x.shape[-1] != self.volume_size:

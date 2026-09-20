@@ -32,7 +32,7 @@ import torch
 import torch.nn.functional as F
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
-from models.tb_model import build_model
+from recon.checkpoint import load_recon_model
 from recon.ct_data import build_drr, load_ct_volume_cached, random_pose
 from recon.train_recon import drr_to_model_input
 
@@ -120,12 +120,9 @@ def main() -> None:
     gen = torch.Generator().manual_seed(0)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(args.backbone, pretrained=False, with_recon=True,
-                        volume_size=args.volume_size).to(device)
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    print(f"Loaded checkpoint: step {ckpt.get('step', '?')}")
+    model = load_recon_model(args.checkpoint, args.volume_size, device, args.backbone)
+    print(f"Loaded checkpoint: step "
+          f"{torch.load(args.checkpoint, map_location='cpu', weights_only=False).get('step', '?')}")
 
     import lpips as lpips_pkg
     lpips_fn = lpips_pkg.LPIPS(net="alex").to(device)

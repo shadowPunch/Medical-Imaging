@@ -44,6 +44,7 @@ def build_model(
     dropout:     float = 0.3,
     with_recon:  bool = False,
     volume_size: int = 128,
+    recon_skip:  bool = False,
 ) -> TBDiagnosticModel:
     if backbone.startswith("xrv_"):
         # e.g. "xrv_densenet121-res224-all" -> torchxrayvision weights id "densenet121-res224-all"
@@ -51,5 +52,7 @@ def build_model(
     else:
         encoder = SharedEncoder(backbone, pretrained)
     head = DiagnosticHead(encoder.out_channels, dropout)
-    recon_head = ReconHead(encoder.out_channels, volume_size=volume_size) if with_recon else None
+    recon_head = ReconHead(encoder.out_channels, volume_size=volume_size,
+                           use_skip=recon_skip,
+                           skip_channels=getattr(encoder, "skip_channels", None)) if with_recon else None
     return TBDiagnosticModel(encoder, head, recon_head)

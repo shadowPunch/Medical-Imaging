@@ -179,6 +179,10 @@ def main() -> None:
                              "prediction's voxels below 0.02 density (target CT is ~50-60%% "
                              "near-zero air/background; a healthy fit should trend toward that, "
                              "not stay at 0%%).")
+    parser.add_argument("--recon-skip", action="store_true",
+                        help="Fuse the encoder's features[-2] into Head B's decoder "
+                             "(models/recon_head.py) — more spatial detail than the "
+                             "deepest map alone carries.")
     parser.add_argument("--freeze-encoder", action="store_true",
                         help="Train Head B only, leaving the shared encoder (and so Head A) "
                              "untouched. See setup_trainable().")
@@ -208,7 +212,7 @@ def main() -> None:
     print(f"CT series: {len(ct_series)}  unpaired CXRs: {len(cxr_paths)}")
 
     model = build_model("efficientnet_b0", pretrained=True, with_recon=True,
-                        volume_size=args.volume_size).to(device)
+                        volume_size=args.volume_size, recon_skip=args.recon_skip).to(device)
     if args.init_from:
         sd = torch.load(args.init_from, map_location=device, weights_only=False)["model"]
         missing, unexpected = model.load_state_dict(sd, strict=False)

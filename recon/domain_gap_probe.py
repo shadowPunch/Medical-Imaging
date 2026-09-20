@@ -40,7 +40,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from data.dataset import load_tbx11k
-from models.tb_model import build_model
+from recon.checkpoint import load_recon_model
 from recon.ct_data import build_drr, load_ct_volume_cached, random_pose
 from recon.train_recon import drr_to_model_input, real_cxr_to_model_input
 
@@ -108,10 +108,7 @@ def main() -> None:
     torch.manual_seed(args.seed)
     gen = torch.Generator().manual_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model("efficientnet_b0", pretrained=False, with_recon=True,
-                        volume_size=args.volume_size).to(device)
-    model.load_state_dict(torch.load(args.checkpoint, map_location=device, weights_only=False)["model"])
-    model.eval()
+    model = load_recon_model(args.checkpoint, args.volume_size, device)
 
     drr_feats, drr_stats, ct_stats = [], [], []
     for series in sorted(p for p in Path(args.ct_dir).iterdir() if p.is_dir()):

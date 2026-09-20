@@ -25,6 +25,11 @@ class SharedEncoder(nn.Module):
         """Channels of the deepest feature map — what Head A connects to."""
         return self._channels[-1]
 
+    @property
+    def skip_channels(self) -> int | None:
+        """Channels of the next-finer map — what Head B's skip connection uses."""
+        return self._channels[-2] if len(self._channels) > 1 else None
+
     def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         """Returns a list of 5 feature maps, coarse-to-fine in channel depth."""
         return self.net(x)
