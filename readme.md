@@ -735,6 +735,39 @@ already expects. That is a different mechanism from the one the augmentation
 was originally built on (closing a feature-space gap), and it is the one that
 actually holds up.
 
+### Full-scale frozen-encoder run (run 7)
+
+Kernel version 7: frozen Phase 2 encoder, mild realism on 50% of paired
+samples, no shape induction, 8000 steps at 320px/128³. (Version 6 was the
+same configuration and died 40 minutes in on a hardcoded
+`/kaggle/input/...` path — this account's older `dataset_sources` mount at
+`/kaggle/input/datasets/<owner>/<slug>/`, but a newly created dataset lands
+at `/kaggle/input/<slug>/`. The notebook now resolves it by searching
+`/kaggle/input` instead of guessing. Useful operational note found while
+debugging it: the kernel log comes back on the *first* page of
+`list_kernel_session_output` as `response.log`, so reading a run's log costs
+one API call and no file downloads — the pagination problem documented above
+only applies to the output *files*.)
+
+| Metric | Run 7 (frozen) | Run 4 | Run 5 | Run 2 |
+|---|---|---|---|---|
+| **Head A held-out AUC** | **0.8894 (drop 0.0000)** | 0.647 | 0.328 | 0.622 |
+| Clean DRR PSNR / SSIM | **22.81 / 0.495** | 21.64 / 0.486 | 22.36 / 0.530 | 28.33 / 0.733 |
+| Film-like PSNR / SSIM | **22.46 / 0.460** | 20.84 / 0.452 | 19.23 / 0.324 | 31.00 / 0.637 |
+| LPIPS | 0.559 | 0.548 | **0.518** | 0.649 |
+| Projection MSE | **0.064** | 0.112 | 0.072 | 0.740 |
+| Separation (clean / film-like) | 2.21 / 1.58 | **1.69** / 1.00 | 1.82 / 0.94 | 4.52 / 1.35 |
+| Conditioning: ratio / cross-patient r | 2.13 / 0.938 | 3.67 / 0.853 | **4.21** / 0.872 | 1.54 / 0.963 |
+
+Head A is preserved exactly while Head B reaches its best paired quality,
+best film-like robustness (the gap between clean and film-like inputs is now
+0.35 PSNR / 0.035 SSIM, against 1.6 / 0.12 for run 4) and best projection
+consistency of any run. **The weak spot is conditioning** — cross-patient
+correlation 0.938 is closer to run 2's averaged-prediction regime than to
+runs 4-5, which is the expected cost of features optimized for diagnosis
+rather than for reconstruction, and it is the honest limitation of this
+checkpoint.
+
 ### Delivered model
 
 **`outputs/phase3_recon_run4_nosi/latest.pt`** (Kaggle kernel version 4:
