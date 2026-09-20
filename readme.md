@@ -768,27 +768,71 @@ runs 4-5, which is the expected cost of features optimized for diagnosis
 rather than for reconstruction, and it is the honest limitation of this
 checkpoint.
 
+### Conditioning is bounded by the frozen encoder, not by training (two refuted fixes)
+
+Run 7's weak conditioning got two hypotheses, both tested and both wrong:
+
+1. **Undertrained head.** LR 1e-4 was tuned for jointly training a ~5M-param
+   encoder; run 7 trains only the 0.35M-param head. A local sweep at 3e-4 and
+   1e-3 left conditioning flat (cross-patient r = 0.949 and 0.947 vs. 0.925 at
+   1e-4) and made LPIPS worse. Refuted.
+2. **Information bottleneck.** `ReconHead` consumed only `features[-1]` — one
+   10×10 map at 320px — which its own docstring flagged as a known gap. Added
+   skip fusion of `features[-2]` (4× the spatial resolution,
+   `models/recon_head.py`, `use_skip`). Conditioning still flat (r = 0.936 vs.
+   0.925). Refuted for the target metric, though it did improve perceptual
+   quality (LPIPS 0.543 → 0.519, SSIM 0.373 → 0.402) at a small cost in
+   projection accuracy (0.077 → 0.084).
+
+**The remaining explanation is architectural, not a bug.** A frozen encoder's
+features are optimized for *diagnosis*, and patient-specific 3D anatomy is
+simply not what they encode. The runs with a trainable encoder reach
+conditioning ratios of 3.67-4.21 precisely because the encoder adapts to the
+reconstruction task — which is the same adaptation that destroys Head A. **The
+shared-encoder design forces a trade-off between Head A's diagnostic accuracy
+and Head B's patient conditioning; it does not let both be maximal.**
+
+Skip fusion is implemented, tested and available (`--recon-skip`) but **was not
+adopted at full scale**: its local evidence is mixed, it does not move the
+metric it was built for, and this project has already been burned twice by
+reduced-scale results that inverted at full scale. Adopting it on 2000-step
+local numbers would repeat that mistake. It is left off by default, and a
+full-scale test is the obvious next experiment when GPU quota refreshes.
+
 ### Delivered model
 
-**`outputs/phase3_recon_run4_nosi/latest.pt`** (Kaggle kernel version 4:
-mild realism on 50% of paired samples, no shape induction, 8000 steps,
-320px/128³, step 8000/8000, 386-key state dict, learned density bias
-−3.73). Chosen over run 5 because real films are film-like by definition:
-run 4 gives up a little clean-DRR quality and a little conditioning for
-markedly more stability under the transformation that approximates a real
-radiograph, at the same measured gap. Its real-CXR output statistics also
-match its DRR statistics closely (air fraction 0.445 vs. 0.453, p90 0.213
-vs. 0.213) — the model treats real films much like what it trained on.
-Verified after download, not assumed: firewall checks pass, and
-`sample_reconstruction.nrrd` is a 128³ 2.5mm volume, values in
-[0.0003, 0.296], no NaNs, `SYNTHESIZED` tag intact.
+**Primary: `outputs/phase3_recon_run7_frozen/latest.pt`** — Kaggle kernel
+version 7, frozen Phase 2 encoder, mild realism on 50% of paired samples, no
+shape induction, 8000 steps, 320px/128³. Keeps the proposal's shared-encoder
+architecture.
 
-**What is still not claimed:** this is not a validated reconstruction. The
-domain probe's linear AUC is still 1.000 — real CXRs and DRRs remain
-trivially separable in feature space; the gap narrowed, it did not close.
-No comparison against X2CT or DuoLift was run, so §10's upgrade path
-remains untaken, and §11a's unvalidated-visualization default stands
-unchanged.
+Verified fresh, not assumed:
+
+| Check | Result |
+|---|---|
+| Checkpoint | step 8000/8000, 386 keys, density bias −3.742 |
+| Head A held-out TBX11K AUC | **0.8894, drop +0.0000** vs. the Phase 2 baseline (ceiling sens@70% 0.926) |
+| §11a firewall | all checks pass (value, gradient, reverse isolation) |
+| Paired (clean / film-like DRR) | PSNR 22.81 / 22.46, SSIM 0.495 / 0.460 |
+| Projection MSE | 0.064 (best of every run) |
+| NRRD export | 128³ at 2.5mm, values [0.0007, 0.284], no NaNs, `SYNTHESIZED` tag intact |
+| Unit tests | 31 passed |
+
+**Alternative, if a second encoder is affordable:
+`outputs/phase3_recon_run4_nosi/latest.pt` as a standalone Head B model,
+paired with the unmodified Phase 2 diagnostic model.** Head A then keeps
+0.8894 by having its own weights, and Head B gets materially better
+conditioning (ratio 3.67, r = 0.853 vs. run 7's 2.13 / 0.938) and the smallest
+measured domain gap (1.69 vs. 2.21), at the cost of ~5.3M extra encoder
+parameters and abandoning the sharing the proposal specifies for
+low-resource deployment. Both options are measured; neither is speculative.
+The diagnosis is identical either way — only the visualization differs.
+
+**What is still not claimed:** neither option is a validated reconstruction.
+The domain probe's linear AUC remains 1.000 (DRRs and real films are still
+trivially separable), cross-patient correlation is high on the primary
+checkpoint, no X2CT/DuoLift comparison was run, so §10's upgrade path remains
+untaken and §11a's unvalidated-visualization default stands unchanged.
 
 ### What holds up from this work
 
