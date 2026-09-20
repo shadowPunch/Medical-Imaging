@@ -718,10 +718,22 @@ scrutiny, and is near-identical on clean vs. film-like inputs:
 | LPIPS | 0.543 | 0.564 |
 | Projection MSE | 0.077 | 0.080 |
 
-That stability across input types is what the realism augmentation was built
-for and is where it finally earns its place: with the encoder frozen, the
-input has to look like what the encoder was trained on, because the encoder
-can no longer adapt to the input.
+That stability across input types is where the realism augmentation finally
+earns its place, and this was tested rather than asserted — a matched frozen
+run with realism off, everything else identical:
+
+| Frozen encoder, 2000 steps, 320px/64³ | Clean SSIM | Film-like SSIM | Clean proj. MSE | Film-like proj. MSE |
+|---|---|---|---|---|
+| realism @ 50% | 0.373 | **0.350** | 0.077 | **0.080** |
+| realism off | 0.366 | 0.246 | 0.095 | 0.211 |
+
+Identical on clean DRRs; without realism, film-like inputs cost 0.12 SSIM and
+2.2× the projection error. **The augmentation is worth keeping in this regime
+and was not worth keeping in the jointly-trained one** — because a frozen
+encoder cannot adapt to the input, so the input has to match what the encoder
+already expects. That is a different mechanism from the one the augmentation
+was originally built on (closing a feature-space gap), and it is the one that
+actually holds up.
 
 ### Delivered model
 
