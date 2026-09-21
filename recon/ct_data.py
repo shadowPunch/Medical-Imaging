@@ -40,6 +40,10 @@ def load_ct_volume_cached(series_dir: str | Path, resample_mm: float = DEFAULT_R
     DICOM data it derives from.
     """
     series_dir = Path(series_dir)
+    if series_dir.suffix == ".pt":
+        # Already a resampled Subject — the Kaggle/Colab runs ship these as a
+        # dataset so the VM needs neither the DICOM tree nor network access.
+        return torch.load(series_dir, weights_only=False)
     if cache_dir is None:
         cache_dir = series_dir.parent.parent / ".cache" / f"resample_{resample_mm}mm"
     else:

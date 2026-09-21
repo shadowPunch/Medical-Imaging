@@ -71,6 +71,29 @@ def real_cxr_to_model_input(path: Path, image_size: int) -> torch.Tensor:
     return ((x - _MEAN_T[0]) / _STD_T[0]).unsqueeze(0)
 
 
+def save_checkpoint(path: Path, model, optimizer, step: int) -> None:
+    """Write via a temp file and rename: a crash mid-write would otherwise leave
+    a truncated checkpoint and defeat the resume this exists for."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(),
+                "step": step}, tmp)
+    tmp.replace(path)
+
+
+def maybe_resume(path: Path, model, optimizer, device) -> int:
+    """Returns the step to start from — 1 when there is nothing to resume."""
+    path = Path(path)
+    if not path.exists():
+        return 1
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    model.load_state_dict(ckpt["model"])
+    optimizer.load_state_dict(ckpt["optimizer"])
+    print(f"Resumed from {path} at step {ckpt['step']}")
+    return ckpt["step"] + 1
+
+
 def setup_trainable(model, freeze_encoder: bool) -> list:
     """Which parameters Phase 3 updates.
 
@@ -190,6 +213,10 @@ def main() -> None:
                         help="Diagnostic checkpoint to initialize the shared encoder from "
                              "(e.g. the Phase 2 deployed model). Required to make "
                              "--freeze-encoder meaningful.")
+    parser.add_argument("--checkpoint-every", type=int, default=0,
+                        help="Save --output every N steps and resume from it if present. "
+                             "Cloud runtimes disconnect; without this a multi-hour run "
+                             "loses everything.")
     parser.add_argument("--output", type=str, default=None,
                         help="If set, saves {'model','optimizer','step'} here at the end — "
                              "same format recon/eval_paired.py expects. This script was a smoke "
@@ -198,7 +225,10 @@ def main() -> None:
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ct_series = sorted(Path(args.lidc_dir).glob("*"))
+    # Either DICOM series directories, or prebuilt .pt volumes (the cache the
+    # cloud runs ship as a dataset). Anything else in the directory is ignored.
+    ct_series = sorted(p for p in Path(args.lidc_dir).glob("*")
+                       if p.is_dir() or p.suffix == ".pt")
     if not ct_series:
         raise ValueError(f"No CT series found in {args.lidc_dir}")
 
@@ -234,8 +264,11 @@ def main() -> None:
     canonical_drr = build_drr(canonical_subject, height=args.image_size, device=device)
     canonical_volume_shape = tuple(canonical_drr.density.shape)
 
+    start_step = (maybe_resume(Path(args.output), model, optimizer, device)
+                  if args.output and args.checkpoint_every else 1)
+
     model.train()
-    for step in range(1, args.steps + 1):
+    for step in range(start_step, args.steps + 1):
         optimizer.zero_grad()
 
         loss_paired = paired_step(model, random.choice(ct_series), args.image_size,
@@ -253,6 +286,9 @@ def main() -> None:
         loss.backward()
         optimizer.step()
         print(log + f"  total={loss.item():.4f}")
+
+        if args.output and args.checkpoint_every and step % args.checkpoint_every == 0:
+            save_checkpoint(Path(args.output), model, optimizer, step)
 
         if args.diagnose_every and step % args.diagnose_every == 0:
             model.eval()
@@ -274,11 +310,8 @@ def main() -> None:
     print("\nDone (smoke run — not trained to convergence; see recon/train_recon.py's docstring).")
 
     if args.output:
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(),
-                   "step": args.steps}, out_path)
-        print(f"Saved checkpoint -> {out_path}")
+        save_checkpoint(Path(args.output), model, optimizer, args.steps)
+        print(f"Saved checkpoint -> {args.output}")
 
 
 if __name__ == "__main__":
