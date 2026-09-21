@@ -768,6 +768,27 @@ runs 4-5, which is the expected cost of features optimized for diagnosis
 rather than for reconstruction, and it is the honest limitation of this
 checkpoint.
 
+### Running Phase 3 on Colab (`tb_phase3_colab.ipynb`)
+
+Same pipeline as the Kaggle notebook; only the environment differs. Runtime →
+Change runtime type → GPU, then run the cells in order.
+
+- **Data.** Add a Colab secret named `KAGGLE_TOKEN` (either credential format —
+  a `KGAT_...` access token or pasted `kaggle.json`) and the notebook pulls the
+  prebuilt CT cache (~2 GB, 150 training series) and the Phase 2 encoder from
+  Kaggle in about a minute. Without the secret it falls back to fetching CT
+  from TCIA, which works but costs ~40 minutes.
+- **Checkpoints go to Drive** (`MyDrive/tb_outputs/phase3_recon`), written every
+  200 steps. Colab disconnects mid-run; re-running the training cell resumes
+  from the last checkpoint instead of restarting.
+- **The CXR paths are optional** — they only pick a real film for the exported
+  sample volume, and the export falls back to a synthetic input. The unpaired
+  shape-induction term is off.
+
+After the run, pull `latest.pt` off Drive and evaluate it locally with
+`recon/eval_paired.py`, `recon/domain_gap_probe.py`,
+`recon/conditioning_probe.py` and the Head A gate below.
+
 ### Standing check: Head A must not move when Head B trains
 
 The encoder-drift bug survived three full-scale runs and a "delivered model"
