@@ -867,6 +867,45 @@ reduced-scale results that inverted at full scale. Adopting it on 2000-step
 local numbers would repeat that mistake. It is left off by default, and a
 full-scale test is the obvious next experiment when GPU quota refreshes.
 
+### Run 8 — the adaptive-encoder test, and the final architecture decision
+
+Runs 4 and 5 changed two things at once, and run 7's weak conditioning had two
+refuted explanations, so one more run isolated the remaining one: **Head B with
+its *own* encoder, initialized from Phase 2 and left free to adapt**, with skip
+fusion and realism at 50%. Head A cannot be harmed here because it keeps its own
+separate weights. 8000 steps, 320px/128³, tracked at
+`wandb.ai/nithish232005-iit-roorkee/tb-phase3`.
+
+| Metric | Run 8 (own adaptive encoder) | Run 7 (shared frozen) | Run 4 (own, ImageNet init, no skip) |
+|---|---|---|---|
+| Conditioning: ratio / cross-patient r | **3.62 / 0.836** | 2.13 / 0.938 | 3.67 / 0.853 |
+| Clean DRR PSNR / SSIM | 21.28 / 0.478 | **22.81 / 0.495** | 21.64 / 0.486 |
+| Film-like PSNR / SSIM | 21.13 / 0.455 | **22.46 / 0.460** | 20.84 / 0.452 |
+| LPIPS | 0.560 | 0.559 | **0.548** |
+| Projection MSE | 0.155 | **0.064** | 0.112 |
+| Separation (clean) | 2.27 | **2.21** | **1.69** |
+| Head A held-out AUC | 0.732 (−0.157) | **0.889 (−0.0000)** | 0.647 (−0.242) |
+
+**The architectural diagnosis was right.** Letting the encoder adapt raises
+conditioning from 2.13/0.938 to 3.62/0.836 — the one thing a learning-rate
+sweep and a skip connection both failed to move. Conditioning is bounded by
+whether the encoder may specialize for reconstruction, and that is exactly what
+a shared encoder forbids.
+
+**It is still not worth it here.** Adaptation costs 2.4× worse projection
+consistency, slightly worse paired quality at both input types, and 15.7 points
+of Head A AUC unless a second encoder is paid for. And Phase 2 initialization
+plus skip fusion bought nothing over run 4's plain ImageNet init (3.62 vs. 3.67
+conditioning) — *adaptation itself* was the active ingredient, not the extras
+built around it.
+
+**Decision: run 7 ships.** The diagnosis is the product and the 3D volume is an
+explicitly unvalidated visualization aid (§11a), so trading 15.7 points of
+diagnostic AUC — or the memory and complexity of a second encoder — for better
+patient conditioning in an aid is the wrong trade. Run 8's numbers are recorded
+so the trade is explicit rather than assumed, and the two-encoder variant
+remains the documented option if Head B ever has to become a measurement tool.
+
 ### Delivered model
 
 **Primary: `outputs/phase3_recon_run7_frozen/latest.pt`** — Kaggle kernel
