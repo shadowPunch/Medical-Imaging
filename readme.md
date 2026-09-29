@@ -2420,12 +2420,25 @@ the volume, applying the threshold, and surfacing a missing-file error. Both
 mutations tried against it (dropping `SetApplyThreshold`, swapping
 background/foreground) fail the suite, so the tests have teeth.
 
-**It has still never run inside real 3D Slicer.** The stubs mirror what this
-code calls, not what Slicer provides, so a wrong Slicer API name or signature
-would pass here and fail there. Installing Slicer to close that gap was
-attempted and abandoned: the 475 MB download ran at ~0.2 MB/min on this
-connection (~40 hours). Running it in Slicer is the remaining acceptance step,
-and is a five-minute job on a normal connection.
+**It has still never run inside real 3D Slicer, and that gap is accepted
+rather than pending.** The stubs mirror what this code calls, not what Slicer
+provides, so a wrong Slicer API name or signature would pass here and fail
+there. Installing Slicer to close the gap was attempted and abandoned: the
+475 MB download ran at ~0.2 MB/min on this connection (~40 hours).
+
+**So treat the module as unverified integration code.** Four calls are the
+likely failure points, in order: `slicer.mrmlScene.Clear(0)` (newer Slicer
+wants no argument), the colour node ID
+`vtkMRMLColorTableNodeFileColdToHotRainbow.txt`, the `ctk.ctkPathLineEdit.Dirs`
+filter constant, and `setSliceViewerLayers`'s keyword names. Each is a one-line
+fix once a traceback exists.
+
+Accepting it is defensible because nothing else depends on it: the module only
+loads files that `recon/export_for_slicer.py` has already produced and verified,
+so a failure here cannot affect the diagnosis, the delivered checkpoint, or any
+number reported in this document. Running it is a five-minute job on a normal
+connection, and the case folder is ~19 MB, so it can be checked on any machine
+that already has Slicer.
 
 The slider works on a **continuous** attention volume, which is why the
 pipeline writes `attention.nrrd` (float) alongside the pre-thresholded
