@@ -2450,6 +2450,69 @@ probability.
 
 ---
 
+## What Phase 3-4 cost, and which experiments earned it
+
+Recorded because the interesting number is not the total but the ratio: eight
+cloud runs produced four findings, and the cheapest experiments were not the
+informative ones.
+
+**Measured GPU consumption.** Kaggle reported 48,941 s (13.6 h) of accelerator
+quota consumed in the week ending 2026-09-20, covering the full-scale runs
+below plus the failed one; later runs fell into subsequent quota windows. Local
+A/Bs on a 4 GB RTX 3050 Ti were unmetered — approximately 25 min per 1000 steps
+at 224px/64³, ~50 min per 2000 steps and ~1.7 h per 4000 steps at 320px/64³.
+
+| Run | Configuration | Outcome | What it bought |
+|---|---|---|---|
+| 2 | no realism, +shape induction | PSNR 28.33 / SSIM 0.733 | The headline number — later shown to be largely an *averaged* prediction (r=0.963) |
+| 3 | realism @50%, +SI | worse on every axis | The negative result: realism does not close the gap at scale |
+| 4 | realism, no SI | proj 0.740→0.112 | First evidence the unpaired term was the problem |
+| 5 | no realism, no SI | best LPIPS/conditioning of the four | Isolated SI from realism — removing SI was the active change |
+| 6 | frozen encoder | **died after 2,375 s** | Nothing. A hardcoded `/kaggle/input/...` path, 40 min of GPU wasted |
+| 7 | frozen encoder (fixed) | Head A drop 0.0000, proj 0.064 | **The delivered model** |
+| 8 | own adaptive encoder | conditioning 2.13→3.62 | Settled the shared-vs-separate encoder question, and declined it |
+
+**What was actually expensive.** Not the GPU — the wrong conclusions. Two
+separate reduced-scale local A/Bs pointed the opposite way to the full-scale
+result (realism at 1000 steps, and the conditioning fixes), and acting on either
+would have shipped a worse model. The 40 minutes lost to run 6 was the cheapest
+failure in this table; the most expensive was nearly delivering run 4 as the
+final model before checking what Phase 3 training had done to Head A.
+
+**What the spend bought that holds up:** a delivered checkpoint that preserves
+the diagnostic head exactly, three reusable measurement instruments, a gate
+that stops the Head A regression recurring, and four documented reversals of
+this project's own earlier readings.
+
+---
+
+## Re-verifying the delivered model
+
+Everything below is deterministic and reproduces the numbers in this document.
+
+```bash
+python -m pytest tests/ -q                     # 65 tests
+python -m recon.firewall_test                  # §11a isolation
+
+# Head A must not have moved (gate: exits non-zero if it did)
+python -m eval.encoder_drift_probe \
+    --checkpoint outputs/step3_mild_lungcrop_tbx11k/best_model.pt \
+    --recon-checkpoint outputs/phase3_recon_run7_frozen/latest.pt \
+    --shenzhen ../datasets/tb-shenzen --montgomery ../datasets/tb-montgomery \
+    --tbx11k ../datasets/tbx11k --held-out tbx11k --lung-crop --max-auc-drop 0.005
+
+# Paired quality (expect PSNR 22.81 / SSIM 0.4951 / projection 0.0641)
+python -m recon.eval_paired \
+    --checkpoint outputs/phase3_recon_run7_frozen/latest.pt \
+    --ct-dir ../datasets/lidc-idri/dicom_heldout --image-size 320 --volume-size 128
+```
+
+Set `TB_WANDB=0` to run these without tracking. Checkpoints and CT data are
+gitignored, so a fresh clone needs `datasets/download.py` and the Phase 3
+training runs (or the checkpoints copied in) before the last two commands work.
+
+---
+
 ## Phase 3 extension point
 
 When adding the reconstruction head, modify `TBDiagnosticModel` to:
