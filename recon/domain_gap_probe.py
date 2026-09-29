@@ -40,6 +40,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from data.dataset import load_tbx11k
+from recon import tracking
 from recon.checkpoint import load_recon_model
 from recon.ct_data import build_drr, load_ct_volume_cached, random_pose
 from recon.train_recon import drr_to_model_input, real_cxr_to_model_input
@@ -104,6 +105,9 @@ def main() -> None:
     parser.add_argument("--json-out", type=str, default=None)
     args = parser.parse_args()
 
+    run = tracking.start_run("domain_gap_probe", vars(args),
+                             name=tracking.run_name("gap", args.checkpoint),
+                             tags=["phase3", "probe"])
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     gen = torch.Generator().manual_seed(args.seed)
@@ -169,6 +173,12 @@ def main() -> None:
         print(f"{n:<16}{fmt(ct):>18}{fmt(drr_s):>18}{fmt(real_s):>18}"
               f"{result['drr_pred_z_from_ct'][n]:>8.2f}{result['real_pred_z_from_ct'][n]:>8.2f}")
     print("\nPredictions: median over samples. z = |median - real-CT mean| / real-CT std; lower is more CT-like.")
+
+    tracking.finish(run, {
+        "separation_ratio": sep, "domain_probe_auc": float(aucs.mean()),
+        "n_outliers_drr": result["n_outliers"]["drr"], "n_outliers_real": result["n_outliers"]["real"],
+        **{f"z_real/{k}": v for k, v in result["real_pred_z_from_ct"].items()},
+        **{f"z_drr/{k}": v for k, v in result["drr_pred_z_from_ct"].items()}})
 
     if args.json_out:
         Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)

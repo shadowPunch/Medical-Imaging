@@ -20,3 +20,4 @@ lpips>=0.1.4
 
 # Dev — tests (python -m pytest tests/)
 pytest>=8.0
+wandb>=0.17

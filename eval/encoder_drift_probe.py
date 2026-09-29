@@ -39,6 +39,7 @@ from sklearn.preprocessing import StandardScaler
 
 from eval.metrics import bootstrap_sens_at_spec_ci, compute_auc, sens_at_spec
 from models.tb_model import build_model
+from recon import tracking
 from train_diagnostic import build_splits, make_loader
 
 ENCODER_PREFIX = "encoder."
@@ -147,6 +148,8 @@ def main() -> None:
     parser.add_argument("--json-out",   type=str, default=None)
     args = parser.parse_args()
 
+    run = tracking.start_run("encoder_drift_probe", vars(args),
+                             name="head-a-drift", tags=["phase3", "probe", "head-a"])
     variant = args.variant if args.variant is not None else ("lungcrop" if args.lung_crop else "")
     train_s, _, held_s = build_splits(args, DataConfig(), variant=variant)
     print(f"Held-out [{args.held_out}]: {len(held_s)} samples (variant={variant or 'none'})\n")
@@ -179,6 +182,12 @@ def main() -> None:
             results[ck]["linear_probe_auc"] = probe_auc
             print(f"{'':<28} refit linear head on frozen features: AUC {probe_auc:.4f}")
         print()
+
+    tracking.finish(run, {"baseline_auc": results["baseline"]["auc"],
+                          **{f"{Path(ck).parent.name}/auc": results[ck]["auc"]
+                             for ck in args.recon_checkpoint},
+                          **{f"{Path(ck).parent.name}/auc_drop": results[ck]["auc_drop_vs_baseline"]
+                             for ck in args.recon_checkpoint}})
 
     if args.json_out:
         Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)

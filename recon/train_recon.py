@@ -43,6 +43,7 @@ from data.dataset import load_montgomery, load_shenzhen, load_tbx11k
 from data.transforms import _MEAN, _STD
 from models.tb_model import build_model
 from recon.ct_data import build_drr, load_ct_volume_cached, random_pose
+from recon import tracking
 from recon.drr_realism import STRENGTHS, realistic_drr
 
 _MEAN_T = torch.tensor(_MEAN).view(1, 3, 1, 1)
@@ -267,6 +268,12 @@ def main() -> None:
     start_step = (maybe_resume(Path(args.output), model, optimizer, device)
                   if args.output and args.checkpoint_every else 1)
 
+    run = tracking.start_run(
+        "train", {**vars(args), "n_ct_series": len(ct_series), "n_cxr": len(cxr_paths),
+                  "start_step": start_step, "device": str(device)},
+        name=Path(args.output).parent.name if args.output else None,
+        tags=["phase3", "recon"])
+
     model.train()
     for step in range(start_step, args.steps + 1):
         optimizer.zero_grad()
@@ -285,6 +292,11 @@ def main() -> None:
 
         loss.backward()
         optimizer.step()
+
+        metrics = {"loss/paired": loss_paired.item(), "loss/total": loss.item()}
+        if cxr_paths and args.shape_induction_weight > 0:
+            metrics["loss/shape_induction"] = loss_shape.item()
+        tracking.log(run, metrics, step=step)
         print(log + f"  total={loss.item():.4f}")
 
         if args.output and args.checkpoint_every and step % args.checkpoint_every == 0:
@@ -305,6 +317,10 @@ def main() -> None:
             frac_zero_target = (target_probe < 0.02).float().mean().item()
             print(f"  [diagnostic] pred min={probe_pred.min().item():.4f} mean={probe_pred.mean().item():.4f} "
                   f"frac<0.02={frac_zero_pred:.1%}   target frac<0.02={frac_zero_target:.1%}")
+            tracking.log(run, {"diag/pred_min": probe_pred.min().item(),
+                               "diag/pred_mean": probe_pred.mean().item(),
+                               "diag/pred_frac_below_0.02": frac_zero_pred,
+                               "diag/target_frac_below_0.02": frac_zero_target}, step=step)
             model.train()
 
     print("\nDone (smoke run — not trained to convergence; see recon/train_recon.py's docstring).")
@@ -312,6 +328,8 @@ def main() -> None:
     if args.output:
         save_checkpoint(Path(args.output), model, optimizer, args.steps)
         print(f"Saved checkpoint -> {args.output}")
+
+    tracking.finish(run, {"final_paired_loss": loss_paired.item(), "checkpoint": args.output})
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from recon import tracking
 from recon.checkpoint import load_recon_model
 from recon.ct_data import build_drr, load_ct_volume_cached, random_pose
 from recon.train_recon import drr_to_model_input
@@ -67,6 +68,9 @@ def main() -> None:
     parser.add_argument("--json-out", type=str, default=None)
     args = parser.parse_args()
 
+    run = tracking.start_run("conditioning_probe", vars(args),
+                             name=tracking.run_name("cond", args.checkpoint),
+                             tags=["phase3", "probe"])
     torch.manual_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_recon_model(args.checkpoint, args.volume_size, device)
@@ -91,6 +95,9 @@ def main() -> None:
           f"   (1.0 = identity matters no more than camera jitter)")
     print(f"Cross-patient correlation: {result['cross_patient_correlation']:.3f}"
           f"   (1.0 = every patient gets the same volume)")
+
+    tracking.finish(run, {"variance_ratio": result["variance_ratio"],
+                          "cross_patient_correlation": result["cross_patient_correlation"]})
 
     if args.json_out:
         Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)

@@ -32,6 +32,7 @@ import torch
 import torch.nn.functional as F
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
+from recon import tracking
 from recon.checkpoint import load_recon_model
 from recon.ct_data import build_drr, load_ct_volume_cached, random_pose
 from recon.train_recon import drr_to_model_input
@@ -117,6 +118,9 @@ def main() -> None:
                         help="Feed film-like DRRs (recon/drr_realism.py) instead of clean ones.")
     parser.add_argument("--json-out", type=str, default=None)
     args = parser.parse_args()
+    run = tracking.start_run("eval_paired", vars(args),
+                             name=tracking.run_name("eval-paired", args.checkpoint),
+                             tags=["phase3", "eval"])
     gen = torch.Generator().manual_seed(0)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -162,11 +166,15 @@ def main() -> None:
     print(f"  Projection MSE: mean={np.mean(proj):.4f}  std={np.std(proj):.4f}  "
           f"[{np.min(proj):.4f}, {np.max(proj):.4f}]")
 
+    summary = {"checkpoint": args.checkpoint, "drr_realism": args.drr_realism, "n": len(results),
+               **{k: {"mean": float(np.mean(v)), "std": float(np.std(v))}
+                  for k, v in [("psnr", psnrs), ("ssim", ssims), ("lpips", lpipss),
+                               ("projection_mse", proj)]}}
+
+    tracking.finish(run, {f"{k}/{stat}": v[stat] for k, v in summary.items()
+                          if isinstance(v, dict) for stat in ("mean", "std")})
+
     if args.json_out:
-        summary = {"checkpoint": args.checkpoint, "drr_realism": args.drr_realism, "n": len(results),
-                   **{k: {"mean": float(np.mean(v)), "std": float(np.std(v))}
-                      for k, v in [("psnr", psnrs), ("ssim", ssims), ("lpips", lpipss),
-                                   ("projection_mse", proj)]}}
         Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.json_out).write_text(json.dumps(summary, indent=2))
         print(f"Saved -> {args.json_out}")

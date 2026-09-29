@@ -789,6 +789,30 @@ After the run, pull `latest.pt` off Drive and evaluate it locally with
 `recon/eval_paired.py`, `recon/domain_gap_probe.py`,
 `recon/conditioning_probe.py` and the Head A gate below.
 
+### Experiment tracking (W&B) — required for every run
+
+Every Phase 3 training, evaluation and probe run logs to Weights & Biases
+(project `tb-phase3`) through `recon/tracking.py`. The wrapper exists so the
+project, run naming and failure behaviour live in one place rather than being
+repeated in five scripts.
+
+Two deliberate behaviours:
+
+- **A run that cannot be tracked does not start.** `start_run` raises
+  `TrackingUnavailable` on auth or network failure instead of quietly producing
+  an untracked number, because an untracked result cannot be traced back to the
+  code and config that produced it.
+- **`TB_WANDB=0` disables tracking** for deliberate offline work, and every
+  logging call accepts the resulting `None` run.
+
+Eval runs are named after the checkpoint they scored (`eval-paired-<run dir>`,
+`gap-<run dir>`, `cond-<run dir>`), so a number in this document can be traced
+to the model that produced it. Only config and metrics are sent — never image
+or CT data.
+
+On Kaggle, the notebook reads a `WANDB_API_KEY` Kaggle secret (Add-ons →
+Secrets) and fails loudly if it is missing.
+
 ### Standing check: Head A must not move when Head B trains
 
 The encoder-drift bug survived three full-scale runs and a "delivered model"
