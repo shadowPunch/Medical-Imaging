@@ -8,7 +8,7 @@ checkpoint on that SAME validation split's *complement* variant (lungs
 blanked) instead of whatever variant it was trained on.
 
 Directly comparable to the in-domain complement-AUC baselines in
-code/readme.md (Shenzhen-only, no intervention: 0.933). If this number stays
+docs/investigation-log.md (Shenzhen-only, no intervention: 0.933). If this number stays
 near that baseline after an intervention, the model still reads the
 confound; if it drops toward 0.5, the intervention worked. This is the
 "standing diagnostic" every robustness intervention should be checked
@@ -70,7 +70,7 @@ def main() -> None:
     y_true = np.concatenate(all_labels)
     auc = compute_auc(y_true, y_prob)
     print(f"\nIn-domain complement-AUC ({args.complement_variant}, same val split): {auc:.4f}")
-    print("  Reference points (code/readme.md, Shenzhen-only): "
+    print("  Reference points (docs/investigation-log.md, Shenzhen-only): "
           "no intervention 0.933 (margin-only) / 0.951 (+25px dilated); "
           "mild-aug full-frame 0.893")
 

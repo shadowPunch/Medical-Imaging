@@ -5,7 +5,7 @@ which still contains ribs/mediastinum/border. Normalizing on in-mask
 statistics removes the global exposure/contrast offset that differs between
 sites without border regions dragging the statistics around. Intervention #1
 (lung-crop, already in place) + in-mask normalization, per the robustness
-plan in code/readme.md's Phase 2 validation results — the new reference
+plan in docs/investigation-log.md's Phase 2 validation results — the new reference
 point before texture augmentation (intervention #2).
 
 Run once, then train (use --held-out for the leave-one-source-out pattern

@@ -7,7 +7,7 @@ complement + train_diagnostic.py --lung-complement). If a plain histogram
 logistic regression matches that CNN's AUC, the model isn't reading anatomy
 (shoulders, diaphragm edges) at all — it's reading global acquisition/exposure
 statistics, which would make a region-decomposition ablation moot. See
-code/readme.md's Phase 2 validation results.
+docs/investigation-log.md's Phase 2 validation results.
 
 Example:
     python -m eval.histogram_probe --shenzhen ../datasets/tb-shenzen

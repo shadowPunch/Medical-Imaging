@@ -11,7 +11,7 @@ the surrounding anatomy (shoulders, diaphragm edges) and border/text region.
 This is the inverse-mask ablation — train on the complement *within a single
 source* to test whether the TB label is confounded with acquisition
 characteristics even in-domain, independent of the cross-source setup. See
-TB_CXR_Diagnostic_3D_Proposal.md §5 and code/readme.md.
+TB_CXR_Diagnostic_3D_Proposal.md §5 and docs/investigation-log.md.
 
 Run once, after preprocess.py for Shenzhen/Montgomery (TBX11K ships pre-sized
 already):

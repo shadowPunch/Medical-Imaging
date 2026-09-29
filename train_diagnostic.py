@@ -216,7 +216,7 @@ def main() -> None:
                         help="Randomize the acquisition-texture signature during training "
                              "(resolution round-trip, sharpen/blur jitter, noise, JPEG "
                              "compression, gamma) — targets the confound found in the "
-                             "inverse-mask/high-pass/patch tests, see code/readme.md")
+                             "inverse-mask/high-pass/patch tests, see docs/investigation-log.md")
     parser.add_argument("--aug-strength", type=str, default="aggressive",
                         choices=["mild", "medium", "aggressive"],
                         help="Only with --texture-aug — dial between destroying the confound "

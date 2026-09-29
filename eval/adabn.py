@@ -5,7 +5,7 @@ labels, no backward pass). Cheap: one forward pass per target image.
 Attacks exactly the kind of acquisition-statistics shift this project's
 confound audit found — BatchNorm's running mean/var are literally first- and
 second-order feature statistics, which is what differs between
-scanners/sites. See code/readme.md's Phase 2 validation results.
+scanners/sites. See docs/investigation-log.md's Phase 2 validation results.
 
 Standard AdaBN protocol: the same unlabeled target images are used both to
 recompute BN statistics and to evaluate afterward — there is no separate

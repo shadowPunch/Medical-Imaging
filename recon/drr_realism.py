@@ -4,7 +4,7 @@ chest radiograph, with every effect randomized per sample so real films fall
 inside the training distribution rather than outside it.
 
 Ordered by how much of the measured DRR-vs-real gap each effect addresses
-(see code/readme.md's Phase 3 domain-gap section):
+(see docs/investigation-log.md's Phase 3 domain-gap section):
   1. Framing — a LIDC CT's field of view leaves the body in a small central
      box (~55% black background, hard truncated edges); real films have
      anatomy running off the frame edge. Crop to the body with a random

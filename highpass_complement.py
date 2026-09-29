@@ -5,7 +5,7 @@ so the residual isn't dominated by the mask rectangle's own hard edge), then
 blank the lung region in the residual. Anatomy mostly disappears in a
 high-pass residual; acquisition-level texture (sharpening kernel, compression
 blocking, detector noise) survives — companion to the single-patch test.
-See code/readme.md's Phase 2 validation results.
+See docs/investigation-log.md's Phase 2 validation results.
 
 Example:
     python highpass_complement.py --shenzhen /data/tb-shenzen --blur-radius 20

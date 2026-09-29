@@ -6,7 +6,7 @@ region is visible and everything else is blanked. Training one model per
 region (single source, in-domain) turns "something outside the lungs
 predicts TB" into a specific mechanism: corners/other carrying signal is an
 acquisition artifact, shoulders is body habitus, and so on. See
-code/readme.md's Phase 2 validation results.
+docs/investigation-log.md's Phase 2 validation results.
 
 Run once, then train per region:
     python region_decompose.py --shenzhen /data/tb-shenzen

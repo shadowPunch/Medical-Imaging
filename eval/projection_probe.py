@@ -9,7 +9,7 @@ linear probe before vs. after projecting the source direction out of the
 features. A large AUC drop after projection means the original in-domain AUC
 was substantially riding on source-identity rather than TB-specific signal.
 No retraining of the encoder — everything after feature extraction is a fast
-sklearn linear fit. See code/readme.md's Phase 2 validation results.
+sklearn linear fit. See docs/investigation-log.md's Phase 2 validation results.
 
 Example:
     python -m eval.projection_probe --checkpoint outputs/diagnostic_montgomery/best_model.pt \

@@ -6,7 +6,7 @@ region-decomposition signal is a pervasive high-frequency processing
 signature (sharpening kernel, compression, detector characteristics) present
 in every pixel, rather than anatomy-specific: if a bare corner patch predicts
 TB status, region decomposition was measuring the same thing five times. See
-code/readme.md's Phase 2 validation results.
+docs/investigation-log.md's Phase 2 validation results.
 
 Example:
     python patch_extract.py --shenzhen /data/tb-shenzen --loc top_left --patch-size 96

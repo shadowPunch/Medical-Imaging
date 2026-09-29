@@ -127,7 +127,7 @@ def main() -> None:
     optimizer = torch.optim.AdamW(list(encoder.parameters()) + list(head.parameters()), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
     # AMP, same as Trainer — this fits the 4GB GPU budget documented in
-    # code/readme.md; without it this OOMs at the default batch size.
+    # docs/investigation-log.md; without it this OOMs at the default batch size.
     scaler = torch.amp.GradScaler(device.type)
 
     for epoch in range(1, args.epochs + 1):

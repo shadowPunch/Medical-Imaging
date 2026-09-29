@@ -9,7 +9,7 @@ happen to transfer. A low ceiling means discrimination itself is the problem
 (domain shift in the representation); a high ceiling despite a bad
 frozen-threshold result means the failure is purely calibration/threshold
 transfer, fixable with per-deployment recalibration rather than a better
-encoder. See code/readme.md's Phase 2 validation results.
+encoder. See docs/investigation-log.md's Phase 2 validation results.
 
 Example:
     python -m eval.ceiling_analysis --checkpoint outputs/diagnostic_montgomery/best_model.pt \

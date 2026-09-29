@@ -1,7 +1,7 @@
 """
 Phase 3 quantitative validation against held-out paired CT — the proposal's
 §10 metric this pipeline hasn't had until now. Every prior Phase 3 result in
-code/readme.md demonstrates the pipeline *trains* stably; this is the first
+docs/investigation-log.md demonstrates the pipeline *trains* stably; this is the first
 script that asks whether the output is a thorax or plausible-looking noise.
 
 For each held-out CT series (must be disjoint from whatever trained the

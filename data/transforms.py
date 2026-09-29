@@ -45,7 +45,7 @@ def get_texture_aug_transforms(image_size: int = 320, strength: str = "aggressiv
     Randomizes the acquisition-level texture signature (resolution round-trip,
     sharpen/blur jitter, noise floor, JPEG compression, gamma/contrast curve)
     on top of the standard geometric augmentation. Targets the confound
-    quantified in code/readme.md's Phase 2 validation results — the
+    quantified in docs/investigation-log.md's Phase 2 validation results — the
     high-pass-residual and single-patch tests show the shortcut lives in
     exactly this kind of high-frequency processing signature.
 

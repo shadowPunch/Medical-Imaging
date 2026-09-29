@@ -22,7 +22,7 @@ that paper's exact loss formulation — revisit against the paper before
 trusting the loss weighting for real training. Verified to run end-to-end
 on real data (LIDC-IDRI dev subset + Shenzhen) at small scale; not run to
 convergence — that needs the cloud GPU this environment doesn't have (see
-code/readme.md's Phase 3 status).
+docs/investigation-log.md's Phase 3 status).
 
 Example (smoke test):
     python -m recon.train_recon --lidc-dir ../datasets/lidc-idri/dicom \
@@ -131,7 +131,7 @@ def paired_step(model, ct_series: Path, image_size: int, volume_size: int,
     per-voxel values. L1 penalizes large errors less quadratically and is
     known to produce sparser, less-regression-to-the-mean solutions on
     skewed targets — testing whether that's actually what's happening here
-    (see code/readme.md's Phase 3 section for the diagnostic that motivated
+    (see docs/investigation-log.md's Phase 3 section for the diagnostic that motivated
     this).
     """
     subject = load_ct_volume_cached(ct_series)

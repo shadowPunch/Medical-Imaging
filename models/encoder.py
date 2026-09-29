@@ -42,7 +42,7 @@ class XRVDenseNetEncoder(nn.Module):
     PadChest, etc.) instead of ImageNet-pretrained EfficientNet. ImageNet
     features are texture-biased by construction — natural-image statistics
     reward exactly the kind of high-frequency acquisition cue the confound
-    audit in code/readme.md found this project's default encoder riding.
+    audit in docs/investigation-log.md found this project's default encoder riding.
     Features learned across several independent CXR acquisition pipelines
     should be less tied to any single source's texture signature.
 

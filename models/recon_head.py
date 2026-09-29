@@ -14,7 +14,7 @@ class ReconHead(nn.Module):
     H, W) volume — a channel-to-depth unprojection, not full geometry-aware
     ray sampling. This is a right-sized reimplementation of the DuoLift-CNN
     back-projection *paradigm*, not a vendored copy of the released
-    DuoLift code/weights (see code/readme.md's Phase 3 status for why).
+    DuoLift code/weights (see docs/investigation-log.md's Phase 3 status for why).
 
     Takes the *full* multi-scale feature list (matching SharedEncoder's
     contract and DiagnosticHead's sibling interface). With use_skip=True it
@@ -77,7 +77,7 @@ class ReconHead(nn.Module):
 
         self.to_density = nn.Conv3d(base_channels // 4, 1, kernel_size=1)
         # Real CT density is ~50-63% near-zero air/background (measured on
-        # held-out LIDC-IDRI — see code/readme.md's Phase 3 section). Default
+        # held-out LIDC-IDRI — see docs/investigation-log.md's Phase 3 section). Default
         # init leaves this bias near 0, so softplus(0)=ln(2)~=0.693 is every
         # voxel's starting prediction; reaching the sparse floor (<0.02)
         # needs pre-activation below ~-3.9, and a checkpoint trained 2000
