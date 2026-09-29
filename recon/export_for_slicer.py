@@ -27,7 +27,7 @@ import torch
 from models.tb_model import build_model
 from recon import tracking
 from recon.checkpoint import load_recon_model
-from recon.export import export_heatmap_overlay, export_volume
+from recon.export import export_attention, export_heatmap_overlay, export_volume
 from recon.heatmap import (DEFAULT_PROJECTION_AXIS, attention_volume, choose_axis,
                            infer_projection_axis)
 from recon.train_recon import real_cxr_to_model_input
@@ -93,7 +93,8 @@ def main() -> None:
     attention = attention_volume(heatmap, volume.cpu(), axis=axis)
 
     vol_path = export_volume(volume.cpu(), out_dir / "volume.nrrd", args.resample_mm)
-    heat_path = export_heatmap_overlay(attention, out_dir / "attention.nrrd",
+    heat_path = export_attention(attention, out_dir / "attention.nrrd", args.resample_mm)
+    mask_path = export_heatmap_overlay(attention, out_dir / "attention_mask.nrrd",
                                        args.resample_mm, args.threshold)
     report = {
         "image": args.image,
@@ -103,7 +104,8 @@ def main() -> None:
         "projection_axis": axis, "projection_axis_inferred": inferred,
         "projection_correlation": corr, "projection_axis_warning": warning,
         "attention_above_threshold_voxels": int((attention >= args.threshold).sum()),
-        "volume": str(vol_path), "attention": str(heat_path),
+        "volume": str(vol_path), "attention": str(heat_path), "attention_mask": str(mask_path),
+        "threshold": args.threshold,
         "note": ("Probability comes from the diagnostic head alone. The volume and "
                  "overlay are an unvalidated visualization (proposal 11a) and must "
                  "not be measured or used diagnostically."),
@@ -113,8 +115,8 @@ def main() -> None:
     print(f"TB probability (Head A):      {prob:.4f}")
     print(f"Projection axis:              {axis}  (per-image check: {inferred}, corr {corr:.3f})")
     print(f"Volume  -> {vol_path}")
-    print(f"Overlay -> {heat_path}  ({report['attention_above_threshold_voxels']} voxels "
-          f">= {args.threshold})")
+    print(f"Overlay -> {heat_path} (continuous) and {mask_path} "
+          f"({report['attention_above_threshold_voxels']} voxels >= {args.threshold})")
     print("Both files carry the SYNTHESIZED tag; the volume is not a measurement.")
 
     tracking.finish(run, {"tb_probability": prob, "projection_axis": axis,

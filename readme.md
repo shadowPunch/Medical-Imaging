@@ -2406,8 +2406,17 @@ forgets to show it.
 Verified end-to-end on a real lung-cropped TBX11K film: probability 0.276, both
 NRRDs 128³ at 2.5 mm, co-registered, no NaNs, tag intact.
 
-**Not done:** the Slicer extension itself (scripted module, threshold slider),
-which needs 3D Slicer to develop against and cannot be tested from here. One
+- **`slicer_module/`** — the Slicer scripted module (`TBReconstruction.py`)
+  plus `tb_recon_logic.py`, which holds everything that is not UI and imports
+  nothing from Slicer, so it is covered by the normal test run
+  (`tests/test_slicer_logic.py`). The module loads a case, shows the
+  probability with a note that the volume played no part in it, and offers the
+  §12 threshold slider. See `slicer_module/README.md` for install and use.
+
+The slider works on a **continuous** attention volume, which is why the
+pipeline writes `attention.nrrd` (float) alongside the pre-thresholded
+`attention_mask.nrrd` — re-thresholding a binary mask cannot recover what the
+binarization already discarded. One
 input caveat is recorded in the CLI help: Head A's Phase 2 recipe expects a
 lung-cropped image, so feeding a raw full film gives a mis-calibrated
 probability.

@@ -50,6 +50,21 @@ def export_volume(volume: torch.Tensor | np.ndarray, out_path: str | Path,
     return out_path
 
 
+def export_attention(attention: torch.Tensor | np.ndarray, out_path: str | Path,
+                     spacing_mm: float = 2.5) -> Path:
+    """Writes the continuous [0, 1] attention volume.
+
+    The thresholded mask below is a convenience; this is what a UI threshold
+    slider needs, since re-thresholding a binary mask cannot recover detail the
+    binarization already discarded.
+    """
+    out_path = Path(out_path)
+    img = _to_sitk_image(attention, spacing_mm)
+    img.SetMetaData("description", SYNTHESIZED_TAG + " (localization attention, continuous)")
+    sitk.WriteImage(img, str(out_path))
+    return out_path
+
+
 def export_heatmap_overlay(heatmap: torch.Tensor | np.ndarray, out_path: str | Path,
                            spacing_mm: float = 2.5, threshold: float = 0.5) -> Path:
     """
