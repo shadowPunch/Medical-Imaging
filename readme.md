@@ -2371,6 +2371,49 @@ calibration-sample-size methodology.
 
 ---
 
+## Phase 4 — Slicer delivery (started 2026-09-29)
+
+Phase 4's scope (proposal §12) is heatmap back-projection, a thin
+MONAI-Label-pattern Slicer extension, "synthesized" labelling and a threshold
+slider. The parts that do not need Slicer itself are built and tested:
+
+- **`recon/heatmap.py`** — back-projects Head A's Grad-CAM into the synthesized
+  volume. A single radiograph carries no depth information, so the attention is
+  smeared along the projection axis; attenuating it along the ray would invent
+  precision the input does not contain. Attention is masked by predicted density
+  so it lands on synthesized tissue instead of floating in air.
+- **`recon/export_for_slicer.py`** — the full single pipeline: one chest X-ray
+  in, and out come the TB probability, `volume.nrrd`, a thresholded
+  `attention.nrrd` co-registered with it, and a `report.json`. §11a holds by
+  construction: the probability comes from the Phase 2 diagnostic model alone,
+  and the reconstruction model is a separate object nothing reads back into it.
+
+**The projection axis is measured, not assumed.** The predicted volume's axis
+order follows the CT training target, so it was measured on four held-out CTs:
+predictions and the CTs' own density both project along **axis 2** (correlations
+0.52-0.66 and 0.43-0.57). Per-image inference against a real film is kept as a
+check but does not override that default — a radiograph's intensity convention
+need not match DRR attenuation, and on the demo image the per-image correlation
+was −0.10, which the pipeline reports as weak evidence rather than acting on.
+
+**The export tag now states the limitation, not just the word "synthesized"**,
+which this document previously flagged as worth tightening once Head B reached a
+UI: *"inferred from a single radiograph, not measured. Bulk thoracic shape only:
+fine structure and geometry are unvalidated and volumes differ little between
+patients."* It travels in the file metadata, so it cannot be lost by a UI that
+forgets to show it.
+
+Verified end-to-end on a real lung-cropped TBX11K film: probability 0.276, both
+NRRDs 128³ at 2.5 mm, co-registered, no NaNs, tag intact.
+
+**Not done:** the Slicer extension itself (scripted module, threshold slider),
+which needs 3D Slicer to develop against and cannot be tested from here. One
+input caveat is recorded in the CLI help: Head A's Phase 2 recipe expects a
+lung-cropped image, so feeding a raw full film gives a mis-calibrated
+probability.
+
+---
+
 ## Phase 3 extension point
 
 When adding the reconstruction head, modify `TBDiagnosticModel` to:

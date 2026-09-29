@@ -12,9 +12,15 @@ import numpy as np
 import SimpleITK as sitk
 import torch
 
+# Wording tracks what the evaluation actually supports: bulk thoracic shape and
+# density are reasonable, fine structure and geometry are unvalidated, and the
+# delivered checkpoint's volumes are similar across patients (cross-patient
+# correlation 0.94). Anything vaguer would overstate it; anything stronger would
+# claim a reconstruction this is not.
 SYNTHESIZED_TAG = (
-    "SYNTHESIZED — coarse shape prior, not a reconstruction of this "
-    "patient's anatomy. Not for measurement or diagnosis."
+    "SYNTHESIZED — inferred from a single radiograph, not measured. Bulk thoracic "
+    "shape only: fine structure and geometry are unvalidated and volumes differ "
+    "little between patients. Not for measurement or diagnosis."
 )
 
 
