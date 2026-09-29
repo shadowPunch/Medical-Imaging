@@ -2413,6 +2413,20 @@ NRRDs 128³ at 2.5 mm, co-registered, no NaNs, tag intact.
   probability with a note that the volume played no part in it, and offers the
   §12 threshold slider. See `slicer_module/README.md` for install and use.
 
+**How far the module is verified.** `tb_recon_logic.py` is covered by ordinary
+unit tests. The UI shell is executed against a *stubbed* Slicer API
+(`tests/test_slicer_module_mock.py`): loading a case, layering attention over
+the volume, applying the threshold, and surfacing a missing-file error. Both
+mutations tried against it (dropping `SetApplyThreshold`, swapping
+background/foreground) fail the suite, so the tests have teeth.
+
+**It has still never run inside real 3D Slicer.** The stubs mirror what this
+code calls, not what Slicer provides, so a wrong Slicer API name or signature
+would pass here and fail there. Installing Slicer to close that gap was
+attempted and abandoned: the 475 MB download ran at ~0.2 MB/min on this
+connection (~40 hours). Running it in Slicer is the remaining acceptance step,
+and is a five-minute job on a normal connection.
+
 The slider works on a **continuous** attention volume, which is why the
 pipeline writes `attention.nrrd` (float) alongside the pre-thresholded
 `attention_mask.nrrd` — re-thresholding a binary mask cannot recover what the
